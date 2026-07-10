@@ -3,12 +3,13 @@ import type { ReactNode } from "react";
 import { Button, Card, Tag } from "antd";
 
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
+import { useI18n } from "@/i18n/use-i18n";
 
 export function PromptCard({
     item,
     onOpen,
     onCopy,
-    actionLabel = "复制",
+    actionLabel,
     actionIcon = <Copy className="size-3.5" />,
     actionType = "text",
     extraAction,
@@ -21,6 +22,8 @@ export function PromptCard({
     actionType?: "text" | "primary";
     extraAction?: ReactNode;
 }) {
+    const { t } = useI18n();
+    const resolvedActionLabel = actionLabel || t("common.copy");
     return (
         <Card
             hoverable
@@ -50,7 +53,7 @@ export function PromptCard({
             </button>
             <div className="flex items-center gap-2 px-4 pb-4">
                 <Button block={actionType === "primary"} type={actionType} size="small" icon={actionIcon} onClick={onCopy}>
-                    {actionLabel}
+                    {resolvedActionLabel}
                 </Button>
                 {extraAction}
             </div>

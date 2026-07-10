@@ -14,5 +14,6 @@ FROM nginx:1.27-alpine
 
 COPY --from=web-build /app/web/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/runtime-env.sh /docker-entrypoint.d/10-infinite-canvas-env.sh
 
 EXPOSE 3000

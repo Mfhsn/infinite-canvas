@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
+import { fetchDreamModels, requestDreamImageEdit, requestDreamImageGeneration } from "@/services/api/dream";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -12,19 +13,19 @@ export type AiTextMessage = {
     content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
 };
 
-type ResponseToolCall = {
+export type ResponseToolCall = {
     id: string;
     type: "function";
     function: { name: string; arguments: string };
     thoughtSignature?: string;
 };
 
-type ResponseInputMessage =
+export type ResponseInputMessage =
     | AiTextMessage
     | { type: "function_call"; call_id: string; name: string; arguments: string; thoughtSignature?: string }
     | { role: "tool"; tool_call_id: string; content: string };
 
-type ResponseFunctionTool = {
+export type ResponseFunctionTool = {
     type: "function";
     function: {
         name: string;
@@ -34,7 +35,7 @@ type ResponseFunctionTool = {
     };
 };
 
-type ToolResponseResult = {
+export type ToolResponseResult = {
     content: string;
     toolCalls: ResponseToolCall[];
 };
@@ -112,9 +113,6 @@ const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
 
-const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
-const GEMINI_IMAGE_SIZE_BY_QUALITY: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
-
 function normalizeQuality(quality: string) {
     const value = quality.trim().toLowerCase();
     const normalized = QUALITY_ALIASES[value] || value;
@@ -183,42 +181,6 @@ function resolveRequestSize(quality: string | undefined, size: string) {
     throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
 }
 
-function resolveGeminiImageConfig(config: AiConfig) {
-    const value = config.size.trim();
-    const dimensions = parseImageDimensions(value);
-    const ratio = dimensions ? `${dimensions.width}:${dimensions.height}` : value;
-    const aspectRatio = value && value.toLowerCase() !== "auto" ? closestGeminiAspectRatio(ratio) : undefined;
-    const imageSize = supportsGeminiImageSize(config.model) ? resolveGeminiImageSize(config.quality, dimensions) : undefined;
-    const image = { ...(aspectRatio ? { aspectRatio } : {}), ...(imageSize ? { imageSize } : {}) };
-    return Object.keys(image).length ? { responseFormat: { image } } : {};
-}
-
-function closestGeminiAspectRatio(value: string) {
-    const ratio = parseImageRatio(value);
-    const target = ratio.width / ratio.height;
-    return GEMINI_SUPPORTED_RATIOS.reduce((best, item) => {
-        const current = parseImageRatio(item);
-        const bestRatio = parseImageRatio(best);
-        return Math.abs(current.width / current.height - target) < Math.abs(bestRatio.width / bestRatio.height - target) ? item : best;
-    });
-}
-
-function resolveGeminiImageSize(quality: string, dimensions: { width: number; height: number } | null) {
-    const normalizedQuality = normalizeQuality(quality);
-    if (normalizedQuality) return GEMINI_IMAGE_SIZE_BY_QUALITY[normalizedQuality];
-    if (!dimensions) return undefined;
-    const edge = Math.max(dimensions.width, dimensions.height);
-    if (edge <= 768) return "512";
-    if (edge <= 1536) return "1K";
-    if (edge <= 3072) return "2K";
-    return "4K";
-}
-
-function supportsGeminiImageSize(model: string) {
-    const value = model.toLowerCase();
-    return value.includes("gemini-3") || value.includes("3.1") || value.includes("3-pro");
-}
-
 function resolveImageDataUrl(item: Record<string, unknown>) {
     if (typeof item.b64_json === "string" && item.b64_json) {
         return `data:image/png;base64,${item.b64_json}`;
@@ -248,9 +210,9 @@ function parseImagePayload(payload: ImageApiResponse) {
 
 function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return "请求已取消";
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
+    if (axios.isAxiosError<{ error?: { message?: string }; message?: string; msg?: string; code?: number }>(error)) {
         const responseData = error.response?.data;
-        return responseData?.msg || responseData?.error?.message || readStatusError(error.response?.status, fallback);
+        return responseData?.msg || responseData?.message || responseData?.error?.message || readStatusError(error.response?.status, fallback);
     }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
     return error instanceof Error ? error.message : fallback;
@@ -624,7 +586,7 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
     const response = await axios.post<GeminiPayload>(
         geminiApiUrl(config, "generateContent"),
         {
-            ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
+            ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"] } }),
             contents: [{ role: "user", parts }],
         },
         { headers: geminiHeaders(config), signal: options?.signal },
@@ -651,6 +613,13 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    if (requestConfig.apiFormat === "dream") {
+        try {
+            return await requestDreamImageGeneration(requestConfig, withSystemPrompt(requestConfig, prompt), n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "请求失败"));
+        }
+    }
     if (requestConfig.apiFormat === "gemini") {
         try {
             return await requestGeminiImages(requestConfig, prompt, [], n, options);
@@ -688,6 +657,13 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
+    if (requestConfig.apiFormat === "dream") {
+        try {
+            return await requestDreamImageEdit(requestConfig, withSystemPrompt(requestConfig, requestPrompt), references, mask, n, options);
+        } catch (error) {
+            throw new Error(readAxiosError(error, "请求失败"));
+        }
+    }
     if (requestConfig.apiFormat === "gemini") {
         if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
         try {
@@ -726,6 +702,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
     try {
+        if (requestConfig.apiFormat === "dream") throw new Error("API接口示例暂未提供 LLM 文本接口，请切换到 OpenAI 或 Gemini 文本渠道");
         if (requestConfig.apiFormat === "gemini") {
             const answer = (await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages), onDelta, options)).content || "没有返回内容";
             if (answer === "没有返回内容") onDelta(answer);
@@ -742,8 +719,28 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
     }
 }
 
+export async function requestToolResponse(config: AiConfig, messages: ResponseInputMessage[], tools: ResponseFunctionTool[], toolChoice: ToolChoice = "auto", onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
+    try {
+        if (requestConfig.apiFormat === "dream") throw new Error("API接口示例暂未提供 LLM 工具调用接口，请切换到 OpenAI 或 Gemini 文本渠道");
+        if (requestConfig.apiFormat === "gemini") {
+            return await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages, toGeminiToolOptions(tools, toolChoice)), onDelta, options);
+        }
+        return await requestStreamingResponse(requestConfig, {
+            model: requestConfig.model,
+            input: toResponseInput(withSystemMessage(requestConfig, messages)),
+            tools: tools.map(toResponseTool),
+            tool_choice: toolChoice,
+            parallel_tool_calls: false,
+        }, onDelta, options);
+    } catch (error) {
+        throw new Error(readAxiosError(error, "请求失败"));
+    }
+}
+
 export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {
     try {
+        if (config.apiFormat === "dream") return fetchDreamModels();
         if (config.apiFormat === "gemini") {
             const response = await axios.get<GeminiPayload>(geminiApiUrl({ ...defaultGeminiConfig, ...config }), { headers: geminiHeaders({ ...defaultGeminiConfig, ...config }) });
             validateGeminiPayload(response.data);

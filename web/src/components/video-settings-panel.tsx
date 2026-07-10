@@ -5,6 +5,7 @@ import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
+import { useI18n } from "@/i18n/use-i18n";
 
 const resolutionOptions = [
     { value: "720", label: "720p" },
@@ -12,19 +13,15 @@ const resolutionOptions = [
 ];
 
 const sizeOptions = [
-    { value: "1280x720", label: "横屏", width: 1280, height: 720 },
-    { value: "720x1280", label: "竖屏", width: 720, height: 1280 },
-    { value: "1024x1024", label: "方形", width: 1024, height: 1024 },
-    { value: "1792x1024", label: "宽屏", width: 1792, height: 1024 },
-    { value: "1024x1792", label: "长图", width: 1024, height: 1792 },
-    { value: "auto", label: "auto", width: 0, height: 0 },
-];
+    { value: "1280x720", labelKey: "settings.video.landscape", width: 1280, height: 720 },
+    { value: "720x1280", labelKey: "settings.video.portrait", width: 720, height: 1280 },
+    { value: "1024x1024", labelKey: "settings.video.square", width: 1024, height: 1024 },
+    { value: "1792x1024", labelKey: "settings.video.wide", width: 1792, height: 1024 },
+    { value: "1024x1792", labelKey: "settings.video.tall", width: 1024, height: 1792 },
+    { value: "auto", labelKey: "settings.video.adaptive", width: 0, height: 0 },
+] as const;
 
 const secondOptions = [6, 10, 12, 16, 20];
-
-export const videoResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
-export const videoSizeOptions = sizeOptions.map((item) => ({ value: item.value, label: item.label }));
-export const videoSecondOptions = secondOptions.map((value) => String(value));
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
@@ -35,6 +32,7 @@ type VideoSettingsPanelProps = {
 };
 
 export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+    const { t } = useI18n();
     if (isSeedanceVideoConfig(config)) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
@@ -51,8 +49,8 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
-                {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
-                <SettingGroup title="清晰度" color={theme.node.muted}>
+                {showTitle ? <div className="text-lg font-semibold">{t("settings.video.title")}</div> : null}
+                <SettingGroup title={t("settings.video.clarity")} color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
                         {resolutionOptions.map((item) => (
                             <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
@@ -62,7 +60,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         <ResolutionInput value={resolution} theme={theme} onChange={(value) => onConfigChange("vquality", value)} />
                     </div>
                 </SettingGroup>
-                <SettingGroup title="尺寸" color={theme.node.muted}>
+                <SettingGroup title={t("settings.video.size")} color={theme.node.muted}>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
                         <DimensionInput prefix="W" value={dimensions.width} disabled={size === "auto"} theme={theme} onChange={(value) => updateDimension("width", value)} />
                         <span className="text-lg opacity-45">↔</span>
@@ -79,7 +77,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                 onClick={() => onConfigChange("size", item.value)}
                             >
                                 <SizePreview width={item.width} height={item.height} color={theme.node.text} />
-                                <span>{item.label}</span>
+                                <span>{t(item.labelKey)}</span>
                                 {item.value === "auto" ? null : (
                                     <span className="text-[11px] leading-none opacity-55">
                                         {item.value}
@@ -89,7 +87,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         ))}
                     </div>
                 </SettingGroup>
-                <SettingGroup title="秒数" color={theme.node.muted}>
+                <SettingGroup title={t("settings.video.seconds")} color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
                         {secondOptions.map((value) => (
                             <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
@@ -105,6 +103,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
 }
 
 function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+    const { t } = useI18n();
     const model = modelOptionName(config.model || config.videoModel);
     const resolution = normalizeSeedanceResolution(config.vquality, model);
     const ratio = normalizeSeedanceRatio(config.size);
@@ -115,8 +114,8 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, 
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
-                {showTitle ? <div className="text-lg font-semibold">视频设置</div> : null}
-                <SettingGroup title="分辨率" color={theme.node.muted}>
+                {showTitle ? <div className="text-lg font-semibold">{t("settings.video.title")}</div> : null}
+                <SettingGroup title={t("settings.video.resolution")} color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
                         {seedanceResolutionOptions.map((item) => {
                             const disabled = item.value === "1080p" && isSeedanceFastModel(model);
@@ -127,9 +126,9 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, 
                             );
                         })}
                     </div>
-                    {isSeedanceFastModel(model) ? <div className="text-[11px] leading-4 opacity-55">fast 模型不支持 1080p，会自动使用 720p。</div> : null}
+                    {isSeedanceFastModel(model) ? <div className="text-[11px] leading-4 opacity-55">{t("settings.video.fastNo1080")}</div> : null}
                 </SettingGroup>
-                <SettingGroup title="比例" color={theme.node.muted}>
+                <SettingGroup title={t("settings.video.ratio")} color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
                         {seedanceRatioOptions.map((item) => (
                             <button
@@ -141,26 +140,26 @@ function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, 
                                 onClick={() => onConfigChange("size", item.value)}
                             >
                                 <SizePreview width={ratioPreview(item.value).width} height={ratioPreview(item.value).height} color={theme.node.text} />
-                                <span>{item.label}</span>
-                                <span className="text-[10px] leading-none opacity-55">{item.value === "adaptive" ? "adaptive" : seedancePixelLabel(resolution, item.value)}</span>
+                                <span>{seedanceRatioLabel(item.value, t)}</span>
+                                <span className="text-[10px] leading-none opacity-55">{item.value === "adaptive" ? "adaptive" : seedancePixelDisplay(resolution, item.value, t)}</span>
                             </button>
                         ))}
                     </div>
                 </SettingGroup>
-                <SettingGroup title="时长" color={theme.node.muted}>
+                <SettingGroup title={t("settings.video.duration")} color={theme.node.muted}>
                     <div className="grid grid-cols-4 gap-2.5">
                         {seedanceDurationOptions.map((value) => (
                             <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
-                                {value === -1 ? "智能" : `${value}s`}
+                                {value === -1 ? t("settings.video.smart") : `${value}s`}
                             </OptionPill>
                         ))}
                     </div>
                     <NumberInput value={String(duration)} min={-1} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
                 </SettingGroup>
-                <SettingGroup title="输出" color={theme.node.muted}>
+                <SettingGroup title={t("settings.video.output")} color={theme.node.muted}>
                     <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
-                        <SwitchRow label="生成声音" checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} />
-                        <SwitchRow label="添加水印" checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} />
+                        <SwitchRow label={t("settings.video.generateAudio")} checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} />
+                        <SwitchRow label={t("settings.video.watermark")} checked={watermark} theme={theme} onChange={(checked) => onConfigChange("videoWatermark", String(checked))} />
                     </div>
                 </SettingGroup>
             </div>
@@ -172,16 +171,17 @@ export function videoResolutionLabel(value: string) {
     return `${normalizeVideoResolutionValue(value)}p`;
 }
 
-export function videoSizeLabel(value: string) {
+export function videoSizeLabel(value: string, t?: ReturnType<typeof useI18n>["t"]) {
     const ratio = normalizeSeedanceRatio(value);
-    if (value === "adaptive" || value === "auto") return "自适应";
-    if (ratio === value) return seedanceRatioOptions.find((item) => item.value === ratio)?.label || ratio;
+    if (value === "adaptive" || value === "auto") return t ? t("settings.video.adaptive") : "自适应";
+    if (ratio === value) return seedanceRatioLabel(ratio, t) || ratio;
     const size = normalizeVideoSizeValue(value);
-    return sizeOptions.find((item) => item.value === size)?.label || size;
+    const option = sizeOptions.find((item) => item.value === size);
+    return option ? (t ? t(option.labelKey) : fallbackVideoSizeLabel(option.value)) : size;
 }
 
-export function videoSecondsLabel(value: string) {
-    if (String(value).trim() === "-1") return "智能";
+export function videoSecondsLabel(value: string, t?: ReturnType<typeof useI18n>["t"]) {
+    if (String(value).trim() === "-1") return t ? t("settings.video.smart") : "智能";
     return `${value || "6"}s`;
 }
 
@@ -195,6 +195,29 @@ export function normalizeVideoResolutionValue(value: string) {
     if (value === "480p" || value === "low") return "480";
     if (value === "720p" || value === "auto" || value === "high" || value === "medium") return "720";
     return value.replace(/p$/i, "") || "720";
+}
+
+function seedanceRatioLabel(value: string, t?: ReturnType<typeof useI18n>["t"]) {
+    const keyMap = {
+        "16:9": "settings.video.landscape",
+        "9:16": "settings.video.portrait",
+        "1:1": "settings.video.square",
+        "4:3": "settings.video.standardLandscape",
+        "3:4": "settings.video.standardPortrait",
+        "21:9": "settings.video.cinema",
+        adaptive: "settings.video.adaptive",
+    } as const;
+    const key = keyMap[value as keyof typeof keyMap];
+    return key && t ? t(key) : seedanceRatioOptions.find((item) => item.value === value)?.label || value;
+}
+
+function seedancePixelDisplay(resolution: string, ratio: string, t?: ReturnType<typeof useI18n>["t"]) {
+    const label = seedancePixelLabel(resolution, ratio);
+    return label === "自动匹配" && t ? t("settings.video.autoMatch") : label;
+}
+
+function fallbackVideoSizeLabel(value: string) {
+    return ({ "1280x720": "横屏", "720x1280": "竖屏", "1024x1024": "方形", "1792x1024": "宽屏", "1024x1792": "长图", auto: "自适应" } as Record<string, string>)[value] || value;
 }
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
