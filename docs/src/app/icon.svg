@@ -1,4 +1,10 @@
 <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M32 8L58 54H46L32 29L18 54H6L32 8Z" fill="currentColor"/>
-  <path d="M32 40L40 54H24L32 40Z" fill="currentColor"/>
+  <style>
+    .logo-stroke { stroke: #1c1917; }
+    @media (prefers-color-scheme: dark) { .logo-stroke { stroke: #fafaf9; } }
+  </style>
+  <g class="logo-stroke" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 8H15C11.134 8 8 11.134 8 15V21M43 8H49C52.866 8 56 11.134 56 15V21M8 43V49C8 52.866 11.134 56 15 56H21M56 43V49C56 52.866 52.866 56 49 56H43" stroke-width="4.5" />
+    <path d="M10 32C10 24.9 14.2 20 20.4 20C31.2 20 32.8 44 43.6 44C49.8 44 54 39.1 54 32C54 24.9 49.8 20 43.6 20C32.8 20 31.2 44 20.4 44C14.2 44 10 39.1 10 32Z" stroke-width="6" />
+  </g>
 </svg>

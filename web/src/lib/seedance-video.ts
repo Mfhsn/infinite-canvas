@@ -1,4 +1,5 @@
 import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import type { I18nKey, I18nParams } from "@/i18n/messages";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -11,6 +12,10 @@ export const SEEDANCE_REFERENCE_LIMITS = {
     audioMaxBytes: 15 * 1024 * 1024,
 };
 
+export const DREAM_SEEDANCE_15_MODEL = "doubao-seedance-1-5-pro-251215";
+export const DREAM_SEEDANCE_20_MODEL = "doubao-seedance-2-0-260128";
+export type DreamVideoMode = "start-end" | "subject";
+
 export const seedanceResolutionOptions = [
     { value: "480p", label: "480p" },
     { value: "720p", label: "720p" },
@@ -18,16 +23,64 @@ export const seedanceResolutionOptions = [
 ] as const;
 
 export const seedanceRatioOptions = [
-    { value: "16:9", label: "横屏" },
-    { value: "9:16", label: "竖屏" },
-    { value: "1:1", label: "方形" },
-    { value: "4:3", label: "标准横屏" },
-    { value: "3:4", label: "标准竖屏" },
-    { value: "21:9", label: "宽银幕" },
-    { value: "adaptive", label: "自适应" },
+    { value: "16:9", label: "Landscape" },
+    { value: "9:16", label: "Portrait" },
+    { value: "1:1", label: "Square" },
+    { value: "4:3", label: "Standard landscape" },
+    { value: "3:4", label: "Standard portrait" },
+    { value: "21:9", label: "Cinema" },
+    { value: "adaptive", label: "Adaptive" },
 ] as const;
 
 export const seedanceDurationOptions = [-1, 4, 5, 6, 8, 10, 12, 15] as const;
+
+export function isBuiltInDreamVideoConfig(config: AiConfig) {
+    const selectedModel = config.videoModel || config.model;
+    const requestConfig = resolveModelRequestConfig(config, selectedModel);
+    return requestConfig.apiFormat === "dream" && isDreamSeedanceModel(modelOptionName(requestConfig.videoModel || requestConfig.model || selectedModel));
+}
+
+export function isDreamSeedanceModel(model: string) {
+    return model === DREAM_SEEDANCE_15_MODEL || model === DREAM_SEEDANCE_20_MODEL;
+}
+
+export function isDreamSeedance20Model(model: string) {
+    return model === DREAM_SEEDANCE_20_MODEL;
+}
+
+export function dreamVideoModes(model: string): DreamVideoMode[] {
+    return isDreamSeedance20Model(model) ? ["start-end", "subject"] : ["start-end"];
+}
+
+export function defaultDreamVideoMode(model: string): DreamVideoMode {
+    return isDreamSeedance20Model(model) ? "subject" : "start-end";
+}
+
+export function normalizeDreamVideoMode(value: string, model: string): DreamVideoMode {
+    return value === "subject" && isDreamSeedance20Model(model) ? "subject" : "start-end";
+}
+
+export function dreamVideoRatioOptions(model: string) {
+    return seedanceRatioOptions.filter((item) => item.value !== "adaptive" && (item.value !== "21:9" || isDreamSeedance20Model(model)));
+}
+
+export function normalizeDreamVideoRatio(value: string, model: string) {
+    const ratio = normalizeSeedanceRatio(value);
+    return dreamVideoRatioOptions(model).some((item) => item.value === ratio) ? ratio : "16:9";
+}
+
+export function normalizeDreamVideoDuration(value: string, model: string) {
+    const seconds = Math.floor(Number(value) || (isDreamSeedance20Model(model) ? 10 : 5));
+    if (isDreamSeedance20Model(model)) return Math.max(4, Math.min(15, seconds));
+    return seconds > 5 ? 10 : 5;
+}
+
+export function normalizeDreamVideoSeed(value: string) {
+    const normalized = value.trim();
+    if (!normalized) return -1;
+    const seed = Number(normalized);
+    return Number.isInteger(seed) ? seed : -1;
+}
 
 const seedancePixels = {
     "480p": {
@@ -117,7 +170,7 @@ export function normalizeSeedanceRatio(value: string) {
 export function seedancePixelLabel(resolution: string, ratio: string) {
     const normalizedResolution = normalizeSeedanceResolution(resolution) as keyof typeof seedancePixels;
     const normalizedRatio = normalizeSeedanceRatio(ratio) as keyof (typeof seedancePixels)[typeof normalizedResolution] | "adaptive";
-    if (normalizedRatio === "adaptive") return "自动匹配";
+    if (normalizedRatio === "adaptive") return "auto";
     return seedancePixels[normalizedResolution][normalizedRatio] || "";
 }
 
@@ -144,26 +197,34 @@ export function buildSeedancePromptText(prompt: string, images: ReferenceImage[]
     return `参考素材编号：${labels.join("、")}。请按这些编号理解提示词中的图片、视频和音频引用。\n\n${text}`;
 }
 
-export function seedanceVideoReferenceError(videos: ReferenceVideo[]) {
+export type SeedanceVideoReferenceIssue = { key: I18nKey; params?: I18nParams };
+
+export function dreamOmniReferenceIssue(images: readonly unknown[], videos: readonly unknown[], audios: readonly unknown[]): SeedanceVideoReferenceIssue | null {
+    if (!images.length && !videos.length && !audios.length) return { key: "error.dream.subjectReferencesRequired" };
+    if (images.length > SEEDANCE_REFERENCE_LIMITS.images) return { key: "error.dream.imageReferenceLimit" };
+    if (videos.length > SEEDANCE_REFERENCE_LIMITS.videos) return { key: "error.dream.videoReferenceLimit" };
+    if (audios.length > SEEDANCE_REFERENCE_LIMITS.audios) return { key: "error.dream.audioReferenceLimit" };
+    return null;
+}
+
+export function seedanceVideoReferenceError(videos: ReferenceVideo[]): SeedanceVideoReferenceIssue | null {
     let totalDurationMs = 0;
     for (let index = 0; index < videos.length; index += 1) {
         const video = videos[index];
-        const label = seedanceReferenceLabel("video", index);
-        if (video.bytes && video.bytes > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes) return `${label} 超过 50MB，请压缩后再上传`;
+        const params = { index: index + 1 };
+        if (video.bytes && video.bytes > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes) return { key: "video.referenceIssue.tooLarge", params };
         if (video.durationMs) {
-            if (video.durationMs < 2000 || video.durationMs > 15000) return `${label} 时长需要在 2-15 秒之间`;
+            if (video.durationMs < 2000 || video.durationMs > 15000) return { key: "video.referenceIssue.duration", params };
             totalDurationMs += video.durationMs;
         }
         if (video.width && video.height) {
-            if (video.width < 300 || video.width > 6000 || video.height < 300 || video.height > 6000) return `${label} 宽高需要在 300-6000px 之间`;
+            if (video.width < 300 || video.width > 6000 || video.height < 300 || video.height > 6000) return { key: "video.referenceIssue.dimensions", params };
             const ratio = video.width / video.height;
-            if (ratio < 0.4 || ratio > 2.5) return `${label} 宽高比需要在 0.4-2.5 之间`;
+            if (ratio < 0.4 || ratio > 2.5) return { key: "video.referenceIssue.ratio", params };
             const pixels = video.width * video.height;
-            if (pixels < 640 * 640 || pixels > 2206 * 946) return `${label} 像素总量不符合 Seedance 要求，请转成 480p/720p/1080p 后再上传`;
+            if (pixels < 640 * 640 || pixels > 2206 * 946) return { key: "video.referenceIssue.pixels", params };
         }
     }
-    if (totalDurationMs > 15000) return "Seedance 参考视频总时长不能超过 15 秒";
-    return "";
+    if (totalDurationMs > 15000) return { key: "video.referenceIssue.totalDuration" };
+    return null;
 }
-
-export const seedanceVideoReferenceHint = "参考视频需为 mp4/mov，H.264/H.265，FPS 24-60；含真人人脸素材请使用火山授权 asset:// 素材。";

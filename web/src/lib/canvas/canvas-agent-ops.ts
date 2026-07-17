@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 
 import { getNodeSpec } from "@/constant/canvas";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ViewportTransform } from "@/types/canvas";
+import type { I18nKey, I18nTranslator } from "@/i18n/messages";
 
 export type CanvasAgentOp =
     | { type: "add_node"; id?: string; nodeType?: CanvasNodeType; title?: string; position?: { x: number; y: number }; x?: number; y?: number; width?: number; height?: number; metadata?: CanvasNodeMetadata }
@@ -22,15 +23,15 @@ export type CanvasAgentSnapshot = {
     viewport: ViewportTransform;
 };
 
-export function summarizeCanvasAgentOps(ops?: CanvasAgentOp[]) {
+export function summarizeCanvasAgentOps(ops?: CanvasAgentOp[], t?: I18nTranslator) {
     const counts = (Array.isArray(ops) ? ops : []).reduce<Record<string, number>>((acc, op) => {
         if (!op?.type) return acc;
         acc[op.type] = (acc[op.type] || 0) + 1;
         return acc;
     }, {});
     return Object.entries(counts)
-        .map(([type, count]) => `${opLabel(type)} ${count}`)
-        .join("，");
+        .map(([type, count]) => `${opLabel(type, t)} ${count}`)
+        .join(t ? " · " : "，");
 }
 
 export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasAgentOp[]) {
@@ -83,7 +84,20 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
     return { ...snapshot, nodes, connections, selectedNodeIds, viewport };
 }
 
-function opLabel(type: string) {
+function opLabel(type: string, t?: I18nTranslator) {
+    if (t) {
+        const keys: Record<string, I18nKey> = {
+            add_node: "agent.op.addNode",
+            update_node: "agent.op.updateNode",
+            delete_node: "agent.op.deleteNode",
+            delete_connections: "agent.op.deleteConnections",
+            connect_nodes: "agent.op.connectNodes",
+            set_viewport: "agent.op.setViewport",
+            select_nodes: "agent.op.selectNodes",
+            run_generation: "agent.op.runGeneration",
+        };
+        return keys[type] ? t(keys[type]) : type;
+    }
     if (type === "add_node") return "新增节点";
     if (type === "update_node") return "更新节点";
     if (type === "delete_node") return "删除节点";

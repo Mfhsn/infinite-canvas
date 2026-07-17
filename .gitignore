@@ -1,9 +1,11 @@
 .next/
 out/
 node_modules/
+storage-server/dist/
 .env*
 !.env.example
 data/
+mysql/
 *.log
 *.tsbuildinfo
 .DS_Store

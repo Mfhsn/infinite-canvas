@@ -4,9 +4,24 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      secrets:
+        - app_env
     ports:
       - "3000:3000"
     environment:
+      DATA_STORAGE_DRIVER: ${DATA_STORAGE_DRIVER:-browser}
+      STORAGE_NAMESPACE: ${STORAGE_NAMESPACE:-default}
+      STORAGE_MAX_FILE_MB: ${STORAGE_MAX_FILE_MB:-128}
+      STORAGE_MAX_DOCUMENT_MB: ${STORAGE_MAX_DOCUMENT_MB:-16}
+      MYSQL_HOST: ${MYSQL_HOST:-mysql}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-infinite_canvas}
+      MYSQL_USER: ${MYSQL_USER:-infinite_canvas}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-infinite_canvas}
+      MYSQL_CONNECTION_LIMIT: ${MYSQL_CONNECTION_LIMIT:-10}
+      MYSQL_CONNECT_ATTEMPTS: ${MYSQL_CONNECT_ATTEMPTS:-30}
+      MYSQL_CONNECT_RETRY_MS: ${MYSQL_CONNECT_RETRY_MS:-2000}
+      MYSQL_SSL: ${MYSQL_SSL:-false}
       VITE_DOC_URL: ${VITE_DOC_URL:-}
       VITE_AI_CONFIG_OVERRIDE: ${VITE_AI_CONFIG_OVERRIDE:-}
       VITE_AI_CHANNELS_JSON: ${VITE_AI_CHANNELS_JSON:-}
@@ -15,7 +30,9 @@ services:
       VITE_AI_API_FORMAT: ${VITE_AI_API_FORMAT:-}
       VITE_AI_BASE_URL: ${VITE_AI_BASE_URL:-}
       VITE_AI_API_KEY: ${VITE_AI_API_KEY:-}
+      VITE_AI_PLATFORM_ID: ${VITE_AI_PLATFORM_ID:-}
       VITE_AI_MODELS: ${VITE_AI_MODELS:-}
+      VITE_AI_TASK_TIMEOUT_MS: ${VITE_AI_TASK_TIMEOUT_MS:-}
       VITE_DEFAULT_IMAGE_MODEL: ${VITE_DEFAULT_IMAGE_MODEL:-}
       VITE_DEFAULT_VIDEO_MODEL: ${VITE_DEFAULT_VIDEO_MODEL:-}
       VITE_DEFAULT_TEXT_MODEL: ${VITE_DEFAULT_TEXT_MODEL:-}
@@ -31,3 +48,27 @@ services:
       VITE_DEFAULT_AUDIO_FORMAT: ${VITE_DEFAULT_AUDIO_FORMAT:-}
       VITE_DEFAULT_AUDIO_SPEED: ${VITE_DEFAULT_AUDIO_SPEED:-}
     restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    command: ["--max-allowed-packet=256M", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-infinite_canvas}
+      MYSQL_USER: ${MYSQL_USER:-infinite_canvas}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-infinite_canvas}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-infinite_canvas_root}
+    volumes:
+      - infinite-canvas-mysql-local:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  infinite-canvas-mysql-local:
+
+secrets:
+  app_env:
+    file: .env

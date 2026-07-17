@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { ALL_PROMPTS_OPTION, type Prompt } from "@/services/api/prompts";
 import { useI18n } from "@/i18n/use-i18n";
+import { localizeError } from "@/lib/app-error";
 
 export default function PromptsPage() {
     const { message } = App.useApp();
@@ -24,7 +25,7 @@ export default function PromptsPage() {
 
     useEffect(() => {
         if (query.isError) {
-            message.error(query.error instanceof Error ? query.error.message : t("prompts.fetchFailed"));
+            message.error(localizeError(query.error, t, "prompts.fetchFailed"));
         }
     }, [message, query.error, query.isError]);
 
@@ -72,7 +73,7 @@ export default function PromptsPage() {
                                     <div className="flex flex-wrap gap-2">
                                         {promptCategoryOptions.map((category) => (
                                             <Tag.CheckableTag key={category} checked={selectedCategory === category} className={cn("prompt-filter-tag", selectedCategory === category && "is-active")} onChange={() => setSelectedCategory(category)}>
-                                                {category}
+                                                {category === ALL_PROMPTS_OPTION ? t("common.all") : category}
                                             </Tag.CheckableTag>
                                         ))}
                                     </div>
@@ -87,7 +88,7 @@ export default function PromptsPage() {
                                                 className={cn("prompt-filter-tag", (tag === ALL_PROMPTS_OPTION ? selectedTags.length === 0 : selectedTags.includes(tag)) && "is-active")}
                                                 onChange={() => toggleTag(tag)}
                                             >
-                                                {tag}
+                                                {tag === ALL_PROMPTS_OPTION ? t("common.all") : tag}
                                             </Tag.CheckableTag>
                                         ))}
                                     </div>

@@ -3,8 +3,9 @@ import { createPortal } from "react-dom";
 import { Settings2 } from "lucide-react";
 import { Button } from "antd";
 
-import { ImageSettingsPanel, imageQualityLabel, imageSizeLabel } from "@/components/image-settings-panel";
+import { ImageSettingsPanel, imageQualityLabel, imageSizeLabel, isDreamImageSettings } from "@/components/image-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { dreamImageSelection } from "@/lib/dream-image-size";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useI18n } from "@/i18n/use-i18n";
@@ -30,6 +31,8 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
+    const dreamMode = isDreamImageSettings(config);
+    const dreamSize = dreamImageSelection(quality, activeSize);
     const updateOpen = (nextOpen: boolean) => {
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);
@@ -63,9 +66,17 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     return (
         <>
             <span ref={buttonRef} className="inline-flex min-w-0">
-                <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[180px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={<Settings2 className="size-3.5" />} onClick={() => updateOpen(!open)}>
+                <Button
+                    size="small"
+                    type="text"
+                    className={buttonClassName || "!h-8 !max-w-[180px] !justify-start !rounded-full !px-2.5"}
+                    style={{ background: theme.node.fill, color: theme.node.text }}
+                    icon={<Settings2 className="size-3.5" />}
+                    onClick={() => updateOpen(!open)}
+                >
                     <span className="truncate">
-                        {imageQualityLabel(quality, t)} · {imageSizeLabel(activeSize, t)} · {t("settings.image.countUnit", { count })}
+                        {dreamMode ? `${dreamSize.resolution.toUpperCase()} · ${dreamSize.ratio} · ${dreamSize.width}×${dreamSize.height}` : `${imageQualityLabel(quality, t)} · ${imageSizeLabel(activeSize, t)}`} ·{" "}
+                        {t("settings.image.countUnit", { count })}
                     </span>
                 </Button>
             </span>
@@ -111,14 +122,7 @@ function ImageSettingsPortal({
     } as const;
 
     return createPortal(
-        <div
-            ref={panelRef}
-            className="canvas-image-settings-popover"
-            style={style}
-            onPointerDown={(event) => event.stopPropagation()}
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-        >
+        <div ref={panelRef} className="canvas-image-settings-popover" style={style} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
             <ImageSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
         </div>,
         document.body,

@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { PromptCard } from "./prompt-card";
 import { usePromptList } from "./use-prompt-list";
 import { useI18n } from "@/i18n/use-i18n";
+import { localizeError } from "@/lib/app-error";
 
 export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boolean; onOpenChange: (open: boolean) => void; onSelect: (prompt: string) => void }) {
     const { message } = App.useApp();
@@ -25,7 +26,7 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
     };
 
     useEffect(() => {
-        if (query.isError) message.error(query.error instanceof Error ? query.error.message : t("prompts.fetchFailed"));
+        if (query.isError) message.error(localizeError(query.error, t, "prompts.fetchFailed"));
     }, [message, query.error, query.isError]);
 
     const handleListScroll = (event: UIEvent<HTMLDivElement>) => {
@@ -45,7 +46,7 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
                         <div className="flex flex-wrap gap-2">
                             {promptCategories.map((category) => (
                                 <Tag.CheckableTag key={category} checked={selectedCategory === category} className={cn("prompt-filter-tag", selectedCategory === category && "is-active")} onChange={() => setSelectedCategory(category)}>
-                                    {category}
+                                    {category === ALL_PROMPTS_OPTION ? t("common.all") : category}
                                 </Tag.CheckableTag>
                             ))}
                         </div>
@@ -57,7 +58,7 @@ export function PromptSelectDialog({ open, onOpenChange, onSelect }: { open: boo
                                 const active = tag === ALL_PROMPTS_OPTION ? selectedTags.length === 0 : selectedTags.includes(tag);
                                 return (
                                     <Tag.CheckableTag key={tag} checked={active} className={cn("prompt-filter-tag", active && "is-active")} onChange={() => toggleTag(tag)}>
-                                        {tag}
+                                        {tag === ALL_PROMPTS_OPTION ? t("common.all") : tag}
                                     </Tag.CheckableTag>
                                 );
                             })}

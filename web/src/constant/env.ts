@@ -8,14 +8,17 @@ export type EnvAiChannel = {
     baseUrl?: string;
     apiKey?: string;
     apiFormat?: string;
+    platformId?: number;
     models?: string[];
 };
 
 const runtimeEnv = typeof window === "undefined" ? undefined : window.__INFINITE_CANVAS_ENV__;
 
 export const DOCS_URL = envString("VITE_DOC_URL") || "https://docs.canvas.best";
+export const ENV_AI_PLATFORM_ID = envInteger("VITE_AI_PLATFORM_ID", 6);
 export const ENV_AI_CHANNELS = envAiChannels();
 export const ENV_AI_CONFIG_OVERRIDE = envBoolean("VITE_AI_CONFIG_OVERRIDE");
+export const ENV_AI_TASK_TIMEOUT_MS = envPositiveInteger("VITE_AI_TASK_TIMEOUT_MS", 15 * 60 * 1000);
 export const ENV_DEFAULT_IMAGE_MODEL = envString("VITE_DEFAULT_IMAGE_MODEL");
 export const ENV_DEFAULT_VIDEO_MODEL = envString("VITE_DEFAULT_VIDEO_MODEL");
 export const ENV_DEFAULT_TEXT_MODEL = envString("VITE_DEFAULT_TEXT_MODEL");
@@ -49,7 +52,7 @@ function envAiChannels() {
             const parsed = JSON.parse(json) as unknown;
             if (Array.isArray(parsed)) return parsed.map(normalizeEnvChannel).filter(Boolean) as EnvAiChannel[];
         } catch {
-            console.warn("VITE_AI_CHANNELS_JSON 解析失败，请检查 JSON 格式");
+            console.warn("Failed to parse VITE_AI_CHANNELS_JSON; check its JSON syntax");
         }
     }
 
@@ -60,10 +63,11 @@ function envAiChannels() {
     return [
         {
             id: envString("VITE_AI_CHANNEL_ID").trim() || "env-default",
-            name: envString("VITE_AI_CHANNEL_NAME").trim() || "环境变量渠道",
+            name: envString("VITE_AI_CHANNEL_NAME").trim(),
             baseUrl,
             apiKey,
             apiFormat: envString("VITE_AI_API_FORMAT").trim(),
+            platformId: ENV_AI_PLATFORM_ID,
             models,
         },
     ];
@@ -78,8 +82,24 @@ function normalizeEnvChannel(value: unknown): EnvAiChannel | null {
         baseUrl: stringValue(channel.baseUrl),
         apiKey: stringValue(channel.apiKey),
         apiFormat: stringValue(channel.apiFormat),
+        platformId: integerValue(channel.platformId ?? channel.platform_id),
         models: Array.isArray(channel.models) ? channel.models.map(String).filter(Boolean) : splitEnvList(stringValue(channel.models)),
     };
+}
+
+function envInteger(key: string, fallback: number) {
+    return integerValue(envString(key)) ?? fallback;
+}
+
+function envPositiveInteger(key: string, fallback: number) {
+    const value = integerValue(envString(key));
+    return value && value > 0 ? value : fallback;
+}
+
+function integerValue(value: unknown) {
+    if (value === "" || value === null || value === undefined) return undefined;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
 function splitEnvList(value: string) {

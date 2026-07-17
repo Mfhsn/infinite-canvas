@@ -1,0 +1,20 @@
+{
+  "visual_verdict": {
+    "score": 95,
+    "verdict": "pass",
+    "category_match": true,
+    "differences": [
+      "测试画布仍保留修复前创建的 usage 失败节点，便于对照新重试结果。"
+    ],
+    "suggestions": [
+      "保留当前错误字符串规范化和失败节点重试交互。"
+    ],
+    "reasoning": "同一失败节点重试后画布保持完整，加载态正常，参考图上传通过并最终生成图片；没有再次出现 React invalid child 或黑屏。",
+    "threshold": 90,
+    "passed": true,
+    "generated_screenshot": "/tmp/retry-poll.png",
+    "next_actions": [
+      "运行全量测试、格式检查与生产构建"
+    ]
+  }
+}

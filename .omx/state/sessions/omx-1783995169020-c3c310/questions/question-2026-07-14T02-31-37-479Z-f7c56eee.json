@@ -1,0 +1,93 @@
+{
+  "kind": "omx.question/v1",
+  "question_id": "question-2026-07-14T02-31-37-479Z-f7c56eee",
+  "session_id": "omx-1783995169020-c3c310",
+  "created_at": "2026-07-14T02:31:37.479Z",
+  "updated_at": "2026-07-14T02:32:40.572Z",
+  "status": "answered",
+  "header": "主页改版审批",
+  "question": "是否按《主页 UI 重构计划：创作启动台》执行？计划路径：.omx/plans/home-ui-redesign.md",
+  "options": [
+    {
+      "label": "批准并执行",
+      "value": "approve",
+      "description": "按推荐的编辑式创作控制台方案开始实现并完成验证"
+    },
+    {
+      "label": "需要调整",
+      "value": "revise",
+      "description": "先不改代码，请根据你的意见修改计划"
+    },
+    {
+      "label": "暂不执行",
+      "value": "hold",
+      "description": "保留当前计划，本轮停止在规划阶段"
+    }
+  ],
+  "allow_other": true,
+  "other_label": "补充意见",
+  "multi_select": false,
+  "type": "single-answerable",
+  "questions": [
+    {
+      "id": "q-1",
+      "header": "主页改版审批",
+      "question": "是否按《主页 UI 重构计划：创作启动台》执行？计划路径：.omx/plans/home-ui-redesign.md",
+      "options": [
+        {
+          "label": "批准并执行",
+          "value": "approve",
+          "description": "按推荐的编辑式创作控制台方案开始实现并完成验证"
+        },
+        {
+          "label": "需要调整",
+          "value": "revise",
+          "description": "先不改代码，请根据你的意见修改计划"
+        },
+        {
+          "label": "暂不执行",
+          "value": "hold",
+          "description": "保留当前计划，本轮停止在规划阶段"
+        }
+      ],
+      "allow_other": true,
+      "other_label": "补充意见",
+      "multi_select": false,
+      "type": "single-answerable"
+    }
+  ],
+  "source": "plan",
+  "renderer": {
+    "renderer": "tmux-pane",
+    "target": "%23",
+    "launched_at": "2026-07-14T02:31:37.514Z",
+    "return_target": "%21",
+    "return_transport": "tmux-send-keys"
+  },
+  "answer": {
+    "kind": "option",
+    "value": "approve",
+    "selected_labels": [
+      "批准并执行"
+    ],
+    "selected_values": [
+      "approve"
+    ]
+  },
+  "answers": [
+    {
+      "question_id": "q-1",
+      "index": 0,
+      "answer": {
+        "kind": "option",
+        "value": "approve",
+        "selected_labels": [
+          "批准并执行"
+        ],
+        "selected_values": [
+          "approve"
+        ]
+      }
+    }
+  ]
+}

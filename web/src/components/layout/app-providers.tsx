@@ -8,6 +8,7 @@ import zhCN from "antd/locale/zh_CN";
 
 import { ClientRootInit } from "@/components/layout/client-root-init";
 import { getAntThemeConfig } from "@/lib/app-theme";
+import { translate } from "@/i18n/messages";
 import { useLanguageStore } from "@/stores/use-language-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 
@@ -31,6 +32,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.style.colorScheme = theme;
         document.documentElement.lang = language;
+        document.title = translate(language, "canvas.title");
     }, [dark, language, theme]);
 
     return (

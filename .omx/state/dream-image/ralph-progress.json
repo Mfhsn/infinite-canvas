@@ -1,0 +1,20 @@
+{
+  "visual_verdict": {
+    "score": 94,
+    "verdict": "pass",
+    "category_match": true,
+    "differences": [
+      "The active ratio uses the application's neutral outline instead of the reference's yellow accent.",
+      "The ratio grid is embedded in the existing settings panel rather than a standalone rounded card."
+    ],
+    "suggestions": [
+      "Keep the existing application theme because the reference defines ratio choices and ordering, not a replacement visual system."
+    ],
+    "reasoning": "All nine requested ratios appear in the reference order with matching orientation icons and a clear selected state; the remaining differences preserve the project's established theme.",
+    "threshold": 90,
+    "passed": true,
+    "reference_image": ".cp-images/pasted-image-2026-07-14T09-36-52-404Z.png",
+    "generated_screenshot": "/tmp/infinite-canvas-image-settings.png",
+    "next_actions": ["Complete production build and request-level verification"]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "score": 96,
+  "verdict": "pass",
+  "category_match": true,
+  "differences": [],
+  "suggestions": [
+    "Keep the HTML and Markdown image extraction paths covered by regression tests.",
+    "Retain the neutral fallback for upstream images that are later removed or blocked."
+  ],
+  "reasoning": "The previously broken cards now resolve and render their upstream images. Browser inspection confirms non-zero natural dimensions for all four reported examples, while the fallback prevents broken-image chrome for future upstream failures.",
+  "threshold": 90,
+  "passed": true,
+  "next_actions": [
+    "Run the full test suite and production build.",
+    "Verify the production server serves the refreshed prompt parser."
+  ]
+}

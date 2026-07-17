@@ -1,0 +1,128 @@
+name: infinite-canvas-mfh
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.cn
+      args:
+        BUN_IMAGE: ${BUN_IMAGE:-docker.m.daocloud.io/oven/bun:1.3.13}
+        NODE_IMAGE: ${NODE_IMAGE:-docker.m.daocloud.io/library/node:20-alpine}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+      secrets:
+        - app_env
+    image: infinite-canvas-mfh:cn
+    container_name: infinite-canvas-mfh
+    ports:
+      - "0.0.0.0:3000:3000"
+    env_file:
+      - .env
+    environment:
+      # 容器内部固定监听 3000，与上面的端口映射及镜像健康检查保持一致。
+      STORAGE_API_PORT: 3000
+      TZ: Asia/Shanghai
+    volumes:
+      # 生产容器直接读取宿主机编译产物；web/dist 保持可写以便启动时生成 env.js。
+      - type: bind
+        source: /mnt/infinite-canvas-mfh/web/dist
+        target: /app/web/dist
+      - type: bind
+        source: /mnt/infinite-canvas-mfh/storage-server/dist
+        target: /app/storage-server/dist
+        read_only: true
+      - type: bind
+        source: /mnt/infinite-canvas-mfh/storage-server/migrations
+        target: /app/storage-server/migrations
+        read_only: true
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  web-builder:
+    profiles: ["build-artifacts"]
+    image: ${BUN_IMAGE:-docker.m.daocloud.io/oven/bun:1.3.13}
+    working_dir: /workspace/web
+    volumes:
+      - type: bind
+        source: /mnt/infinite-canvas-mfh
+        target: /workspace
+      - web-builder-node-modules:/workspace/web/node_modules
+      - bun-build-cache:/root/.bun/install/cache
+    command:
+      - sh
+      - -lc
+      - >-
+        bun install --frozen-lockfile
+        --registry="${NPM_REGISTRY:-https://registry.npmmirror.com}"
+        --cache-dir=/root/.bun/install/cache
+        && bun run build
+
+  storage-builder:
+    profiles: ["build-artifacts"]
+    image: ${NODE_IMAGE:-docker.m.daocloud.io/library/node:20-alpine}
+    working_dir: /workspace/storage-server
+    volumes:
+      - type: bind
+        source: /mnt/infinite-canvas-mfh
+        target: /workspace
+      - storage-builder-node-modules:/workspace/storage-server/node_modules
+      - npm-build-cache:/root/.npm
+    command:
+      - sh
+      - -lc
+      - >-
+        npm config set registry "${NPM_REGISTRY:-https://registry.npmmirror.com}"
+        && npm ci --no-audit --no-fund
+        && npm run build
+
+  mysql:
+    profiles: ["local-mysql"]
+    image: ${MYSQL_IMAGE:-docker.m.daocloud.io/library/mysql:8.4}
+    container_name: infinite-canvas-mfh-mysql
+    command:
+      - --max-allowed-packet=256M
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_DATABASE: infinite_canvas
+      MYSQL_USER: ${MYSQL_USER:-infinite_canvas}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-infinite_canvas}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-infinite_canvas_root}
+      TZ: Asia/Shanghai
+    volumes:
+      - type: bind
+        source: /mnt/infinite-canvas-mfh/mysql
+        target: /var/lib/mysql
+      - type: bind
+        source: /mnt/infinite-canvas-mfh/database/infinite_canvas.sql
+        target: /docker-entrypoint-initdb.d/001-infinite-canvas.sql
+        read_only: true
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  web-builder-node-modules:
+  storage-builder-node-modules:
+  bun-build-cache:
+  npm-build-cache:
+
+secrets:
+  app_env:
+    file: .env

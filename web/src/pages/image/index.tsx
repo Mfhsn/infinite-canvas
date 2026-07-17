@@ -1,7 +1,6 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
-import localforage from "localforage";
 import { saveAs } from "file-saver";
 
 import { ImageSettingsPanel } from "@/components/image-settings-panel";
@@ -19,6 +18,9 @@ import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/ima
 import { useAssetStore } from "@/stores/use-asset-store";
 import type { ReferenceImage } from "@/types/image";
 import { useI18n } from "@/i18n/use-i18n";
+import { formatGenerationLogTime, normalizeGenerationLogStatus, type GenerationLogStatus } from "@/lib/generation-log";
+import { localizeError } from "@/lib/app-error";
+import { getDocumentStore } from "@/services/storage/document-store";
 
 type GeneratedImage = {
     id: string;
@@ -43,7 +45,6 @@ type GenerationLog = {
     createdAt: number;
     title: string;
     prompt: string;
-    time: string;
     model: string;
     config: GenerationLogConfig;
     references: ReferenceImage[];
@@ -53,9 +54,14 @@ type GenerationLog = {
     imageCount: number;
     size: string;
     quality: string;
-    status: "成功" | "失败";
+    status: GenerationLogStatus;
     images: GeneratedImage[];
     thumbnails: string[];
+};
+
+type StoredGenerationLog = Omit<Partial<GenerationLog>, "status"> & {
+    status?: GenerationLogStatus | "成功" | "失败";
+    time?: string;
 };
 
 type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
@@ -64,7 +70,7 @@ type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => 
 
 const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
-const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
+const logStore = getDocumentStore("image_generation_logs");
 
 export default function ImagePage() {
     const { message } = App.useApp();
@@ -183,11 +189,11 @@ export default function ImagePage() {
                     durationMs: performance.now() - batchStartedAt,
                     successCount,
                     failCount,
-                    status: successCount ? "成功" : "失败",
+                    status: successCount ? "success" : "failed",
                     images: logImages,
                 }),
             );
-            successCount ? message.success(t("image.generatedSuccess")) : message.error(failed?.reason instanceof Error ? failed.reason.message : t("common.generateFailed"));
+            successCount ? message.success(t("image.generatedSuccess")) : message.error(localizeError(failed?.reason, t, "common.generateFailed"));
         } finally {
             setRunning(false);
         }
@@ -293,7 +299,7 @@ export default function ImagePage() {
             setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
             return nextImage;
         } catch (error) {
-            setResults((value) => updateResultAt(value, index, { status: "failed", error: error instanceof Error ? error.message : t("common.generateFailed") }));
+            setResults((value) => updateResultAt(value, index, { status: "failed", error: localizeError(error, t, "common.generateFailed") }));
             throw error;
         }
     };
@@ -396,7 +402,7 @@ export default function ImagePage() {
 
                             <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
                                 <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {effectiveConfig.size} · {effectiveConfig.quality}
+                                    {modelOptionLabel(effectiveConfig, model, t)} · {effectiveConfig.size} · {effectiveConfig.quality}
                                 </span>
                                 <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
                                     {t("common.adjust")}
@@ -420,7 +426,7 @@ export default function ImagePage() {
                             <div>
                                 <h2 className="text-xl font-semibold">{t("image.results")}</h2>
                             </div>
-                            {running ? <Tag className="m-0 px-2 py-1">{t("image.waiting", { time: formatDuration(elapsedMs) })}</Tag> : null}
+                            {running ? <Tag className="m-0 px-2 py-1">{t("image.waiting", { time: formatDuration(elapsedMs, t) })}</Tag> : null}
                         </div>
                         {results.length ? (
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
@@ -490,7 +496,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
                 <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </label>
             <div className="col-span-2">
-                <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
+                <ImageSettingsPanel config={config} model={model} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
             </div>
         </>
     );
@@ -519,7 +525,7 @@ function ResultImageCard({
                         {image.width}x{image.height}
                     </span>
                     <span>{formatBytes(image.bytes)}</span>
-                    <span>{formatDuration(image.durationMs)}</span>
+                    <span>{formatDuration(image.durationMs, t)}</span>
                 </div>
                 <div className="grid min-w-0 grid-cols-3 gap-2">
                     <Tooltip title={t("common.addToAssets")}>
@@ -643,7 +649,7 @@ function LogPanel({
 }
 
 function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
-    const { t } = useI18n();
+    const { language, t } = useI18n();
     const thumbnails = (log.thumbnails || []).filter(Boolean).slice(0, 4);
 
     return (
@@ -656,7 +662,7 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                 <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
                     <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
                     <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold leading-5">{log.title}</div>
+                        <div className="truncate text-sm font-semibold leading-5">{log.title || t("common.untitled")}</div>
                         {thumbnails.length ? (
                             <div className="mt-2 flex gap-1 overflow-hidden">
                                 {thumbnails.map((image, index) => (
@@ -680,11 +686,11 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                     <div className="flex flex-wrap justify-end gap-1">
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{t("image.logCount", { count: log.imageCount })}</Tag>
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="green">
-                            {formatDuration(log.durationMs)}
+                            {formatDuration(log.durationMs, t)}
                         </Tag>
                     </div>
                     <div className="flex justify-end">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.time}</Tag>
+                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{formatGenerationLogTime(log.createdAt, language)}</Tag>
                     </div>
                 </div>
             </div>
@@ -695,8 +701,8 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
 async function readStoredLogs() {
     if (typeof window === "undefined") return [];
     try {
-        const values: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
+        const values: StoredGenerationLog[] = [];
+        await logStore.iterate<StoredGenerationLog, void>((value) => {
             values.push(value);
         });
         const logs = await Promise.all(values.map(normalizeLog));
@@ -706,7 +712,7 @@ async function readStoredLogs() {
     }
 }
 
-async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
+async function normalizeLog(log: StoredGenerationLog): Promise<GenerationLog> {
     const references = await Promise.all(
         (log.references || []).map(async (item) => ({
             ...item,
@@ -723,9 +729,8 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     return {
         id: log.id || nanoid(),
         createdAt: log.createdAt || Date.now(),
-        title: log.title || log.model || "未命名",
+        title: log.title || log.model || "",
         prompt: log.prompt || log.title || "",
-        time: log.time || new Date().toLocaleString("zh-CN", { hour12: false }),
         model: log.model || config.imageModel || "",
         config,
         references,
@@ -735,7 +740,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         imageCount: log.imageCount || log.successCount || 0,
         size: log.size || config.size || "",
         quality: log.quality || config.quality || "",
-        status: log.status || "成功",
+        status: normalizeGenerationLogStatus(log.status, "success"),
         images,
         thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
     };
@@ -750,7 +755,7 @@ function serializeLog(log: GenerationLog): GenerationLog {
     };
 }
 
-function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
+function normalizeLogConfig(log: StoredGenerationLog): GenerationLogConfig {
     return {
         model: log.config?.model || log.model || "",
         imageModel: log.config?.imageModel || log.model || "",
@@ -809,9 +814,8 @@ function buildLog({
     return {
         id: nanoid(),
         createdAt: Date.now(),
-        title: prompt.slice(0, 12) || "未命名",
+        title: prompt.slice(0, 12),
         prompt,
-        time: new Date().toLocaleString("zh-CN", { hour12: false }),
         model,
         config: logConfig,
         references,

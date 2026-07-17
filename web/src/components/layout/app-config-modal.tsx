@@ -1,15 +1,31 @@
 import { App, Button, Form, Input, Modal, Progress, Select, Tabs } from "antd";
 import { CircleAlert, Cloud, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
 import { useI18n } from "@/i18n/use-i18n";
 import type { I18nKey } from "@/i18n/messages";
 import { fetchChannelModels } from "@/services/api/image";
-import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
+import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent, type AppSyncStage } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, defaultBaseUrlForApiFormat, defaultModelsForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { localizeError } from "@/lib/app-error";
+import { StorageSettingsPanel } from "@/components/layout/storage-settings-panel";
+import {
+    createModelChannel,
+    defaultBaseUrlForApiFormat,
+    defaultModelsForApiFormat,
+    filterModelsByCapability,
+    modelChannelDisplayName,
+    modelOptionLabel,
+    modelOptionsFromChannels,
+    normalizeModelOptionValue,
+    useConfigStore,
+    type AiConfig,
+    type ApiCallFormat,
+    type ModelCapability,
+    type ModelChannel,
+} from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -20,12 +36,17 @@ type ModelGroup = {
 };
 
 type WebdavDomainProgress = {
-    label: string;
-    stage: string;
+    stage: AppSyncStage | "waiting";
+    bytes?: number;
+    detail?: string;
     current?: number;
     total?: number;
     status?: "active" | "success" | "exception";
 };
+
+type WebdavSyncStatus =
+    | { stage: AppSyncStage | "ready"; bytes?: number; detail?: string }
+    | { stage: "error"; detail: string };
 
 const modelGroups: ModelGroup[] = [
     { capability: "image", modelKey: "imageModel", modelsKey: "imageModels", defaultLabelKey: "config.group.imageDefault", optionsLabelKey: "config.group.imageOptions" },
@@ -44,11 +65,30 @@ const webdavDomainLabelKeys: Record<AppSyncDomainKey, I18nKey> = {
     "video-workbench": "config.webdav.domain.videoWorkbench",
 };
 
-function createWebdavDomainProgress(t: Translate): Record<AppSyncDomainKey, WebdavDomainProgress> {
+const webdavStageLabelKeys: Record<AppSyncStage, I18nKey> = {
+    "waiting-local": "config.webdav.stage.waitingLocal",
+    complete: "config.webdav.stage.complete",
+    "read-remote": "config.webdav.stage.readRemote",
+    "read-local": "config.webdav.stage.readLocal",
+    "download-missing": "config.webdav.stage.downloadMissing",
+    "apply-merged": "config.webdav.stage.applyMerged",
+    "upload-new": "config.webdav.stage.uploadNew",
+    "upload-manifest": "config.webdav.stage.uploadManifest",
+    done: "config.webdav.stage.done",
+    failed: "config.webdav.stage.failed",
+    "scan-missing": "config.webdav.stage.scanMissing",
+    "media-complete": "config.webdav.stage.mediaComplete",
+    "download-media": "config.webdav.stage.downloadMedia",
+    "scan-local": "config.webdav.stage.scanLocal",
+    "no-upload": "config.webdav.stage.noUpload",
+    "upload-media": "config.webdav.stage.uploadMedia",
+};
+
+function createWebdavDomainProgress(): Record<AppSyncDomainKey, WebdavDomainProgress> {
     return webdavDomainKeys.reduce(
         (progress, key) => ({
             ...progress,
-            [key]: { label: t(webdavDomainLabelKeys[key]), stage: t("config.webdav.waiting") },
+            [key]: { stage: "waiting" },
         }),
         {} as Record<AppSyncDomainKey, WebdavDomainProgress>,
     );
@@ -61,8 +101,8 @@ export function AppConfigModal() {
     const [loadingChannelId, setLoadingChannelId] = useState("");
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
-    const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
-    const [webdavDomainProgress, setWebdavDomainProgress] = useState(() => createWebdavDomainProgress(t));
+    const [webdavSyncStatus, setWebdavSyncStatus] = useState<WebdavSyncStatus | null>(null);
+    const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
     const config = useConfigStore((state) => state.config);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -71,7 +111,7 @@ export function AppConfigModal() {
     const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
-    const modelOptions = config.models.map((model) => ({ label: modelOptionLabel(config, model), value: model }));
+    const modelOptions = config.models.map((model) => ({ label: modelOptionLabel(config, model, t), value: model }));
     const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
         { label: "OpenAI", value: "openai" },
         { label: "Gemini", value: "gemini" },
@@ -79,16 +119,12 @@ export function AppConfigModal() {
     ];
     const webdavReady = Boolean(webdav.url.trim());
 
-    useEffect(() => {
-        if (!syncingWebdav) setWebdavDomainProgress(createWebdavDomainProgress(t));
-    }, [language, syncingWebdav, t]);
-
     const saveConfig = (nextConfig: AiConfig) => {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
     };
 
     const finishConfig = () => {
-        const ready = config.channels.some((channel) => channel.baseUrl.trim() && (channel.apiFormat === "dream" || channel.apiKey.trim()) && channel.models.length);
+        const ready = config.channels.some((channel) => channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length);
         setConfigDialogOpen(false);
         if (!ready) return;
         message.success(shouldPromptContinue ? t("config.savedContinue") : t("config.saved"));
@@ -122,24 +158,24 @@ export function AppConfigModal() {
     };
 
     const refreshChannelModels = async (channel: ModelChannel) => {
-        if (!channel.baseUrl.trim() || (channel.apiFormat !== "dream" && !channel.apiKey.trim())) {
-            message.error(channel.apiFormat === "dream" ? t("config.channelBaseRequired") : t("config.channelRequired"));
+        if (!channel.baseUrl.trim() || !channel.apiKey.trim()) {
+            message.error(t("config.channelRequired"));
             return;
         }
         setLoadingChannelId(channel.id);
         try {
             const models = await fetchChannelModels(channel);
             updateChannels(config.channels.map((item) => (item.id === channel.id ? { ...item, models } : item)));
-            message.success(t("config.modelsUpdated", { name: channel.name }));
+            message.success(t("config.modelsUpdated", { name: modelChannelDisplayName(channel, t) }));
         } catch (error) {
-            message.error(error instanceof Error ? error.message : t("config.fetchModelsFailed"));
+            message.error(localizeError(error, t, "config.fetchModelsFailed"));
         } finally {
             setLoadingChannelId("");
         }
     };
 
     const refreshAllModels = async () => {
-        const runnable = config.channels.filter((channel) => channel.baseUrl.trim() && (channel.apiFormat === "dream" || channel.apiKey.trim()));
+        const runnable = config.channels.filter((channel) => channel.baseUrl.trim() && channel.apiKey.trim());
         if (!runnable.length) {
             message.error(t("config.anyChannelRequired"));
             return;
@@ -151,7 +187,7 @@ export function AppConfigModal() {
             updateChannels(config.channels.map((channel) => (modelMap.has(channel.id) ? { ...channel, models: modelMap.get(channel.id) || [] } : channel)));
             message.success(t("config.allModelsUpdated"));
         } catch (error) {
-            message.error(error instanceof Error ? error.message : t("config.fetchModelsFailed"));
+            message.error(localizeError(error, t, "config.fetchModelsFailed"));
         } finally {
             setLoadingChannelId("");
         }
@@ -173,20 +209,21 @@ export function AppConfigModal() {
             await testWebdavConnection(webdav);
             message.success(t("config.webdav.available"));
         } catch (error) {
-            message.error(error instanceof Error ? error.message : t("config.webdav.testFailed"));
+            message.error(localizeError(error, t, "config.webdav.testFailed"));
         } finally {
             setTestingWebdav(false);
         }
     };
 
     const updateWebdavProgress = (event: AppSyncProgressEvent) => {
-        setWebdavSyncStatus(event.stage);
+        setWebdavSyncStatus({ stage: event.stage, bytes: event.bytes, detail: event.detail });
         if (!event.domain) return;
         setWebdavDomainProgress((current) => ({
             ...current,
             [event.domain as AppSyncDomainKey]: {
-                label: event.label || t(webdavDomainLabelKeys[event.domain as AppSyncDomainKey]),
                 stage: event.stage,
+                bytes: event.bytes,
+                detail: event.detail,
                 current: event.current,
                 total: event.total,
                 status: event.status,
@@ -200,15 +237,16 @@ export function AppConfigModal() {
             return;
         }
         setSyncingWebdav(true);
-        setWebdavDomainProgress(createWebdavDomainProgress(t));
-        setWebdavSyncStatus(t("config.webdav.ready"));
+        setWebdavDomainProgress(createWebdavDomainProgress());
+        setWebdavSyncStatus({ stage: "ready" });
         try {
             const result = await syncAppDataToWebdav(webdav, updateWebdavProgress);
             updateWebdavConfig("lastSyncedAt", result.syncedAt);
             message.success(t("config.webdav.done", { projects: result.projects, assets: result.assets, logs: result.imageLogs + result.videoLogs, files: result.uploadedFiles, bytes: formatBytes(result.uploadedBytes) }));
         } catch (error) {
-            setWebdavSyncStatus(error instanceof Error ? error.message : t("config.webdav.failed"));
-            message.error(error instanceof Error ? error.message : t("config.webdav.failed"));
+            const detail = localizeError(error, t, "config.webdav.failed");
+            setWebdavSyncStatus({ stage: "error", detail });
+            message.error(detail);
         } finally {
             setSyncingWebdav(false);
         }
@@ -267,7 +305,7 @@ export function AppConfigModal() {
                                         <section key={channel.id} className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
                                             <div className="mb-3 flex items-center justify-between gap-3">
                                                 <div className="min-w-0">
-                                                    <div className="truncate text-sm font-semibold">{channel.name || t("config.unnamedChannel")}</div>
+                                                    <div className="truncate text-sm font-semibold">{modelChannelDisplayName(channel, t)}</div>
                                                     <div className="mt-1 text-xs text-stone-500">
                                                         {apiFormatLabel(channel.apiFormat, t)} · {t("config.savedModels", { count: channel.models.length })}
                                                     </div>
@@ -281,7 +319,7 @@ export function AppConfigModal() {
                                             </div>
                                             <div className="grid gap-4 md:grid-cols-2">
                                                 <Form.Item label={t("config.channelName")} className="mb-0">
-                                                    <Input value={channel.name} onChange={(event) => updateChannel(channel.id, { name: event.target.value })} />
+                                                    <Input value={channel.name} placeholder={modelChannelDisplayName(channel, t)} onChange={(event) => updateChannel(channel.id, { name: event.target.value })} />
                                                 </Form.Item>
                                                 <Form.Item label={t("config.apiFormat")} className="mb-0">
                                                     <Select value={channel.apiFormat} options={apiFormatOptions} onChange={(value: ApiCallFormat) => updateChannelApiFormat(channel, value)} />
@@ -381,6 +419,11 @@ export function AppConfigModal() {
                         ),
                     },
                     {
+                        key: "storage",
+                        label: t("config.tab.storage"),
+                        children: <StorageSettingsPanel />,
+                    },
+                    {
                         key: "webdav",
                         label: "WebDAV",
                         children: (
@@ -417,9 +460,9 @@ export function AppConfigModal() {
                                         <Button type="primary" icon={<RefreshCw className="size-4" />} disabled={!webdavReady || testingWebdav} loading={syncingWebdav} onClick={() => void syncWebdav()}>
                                             {syncingWebdav ? t("config.webdav.syncing") : t("config.webdav.syncNow")}
                                         </Button>
-                                        {webdavSyncStatus ? <span className="text-xs text-stone-500">{webdavSyncStatus}</span> : null}
+                                        {webdavSyncStatus ? <span className="text-xs text-stone-500">{formatWebdavSyncStatus(webdavSyncStatus, t)}</span> : null}
                                     </div>
-                                    {syncingWebdav || webdavSyncStatus ? <WebdavProgressGrid progress={webdavDomainProgress} /> : null}
+                                    {syncingWebdav || webdavSyncStatus ? <WebdavProgressGrid progress={webdavDomainProgress} t={t} /> : null}
                                 </section>
                             </Form>
                         ),
@@ -443,6 +486,7 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
         baseUrl: channels[0]?.baseUrl || config.baseUrl,
         apiKey: channels[0]?.apiKey || config.apiKey,
         apiFormat: channels[0]?.apiFormat || config.apiFormat,
+        platformId: channels[0]?.platformId ?? config.platformId,
         imageModels,
         videoModels,
         textModels,
@@ -482,7 +526,7 @@ function formatWebdavTime(value: string, language = "zh-CN") {
     return new Date(value).toLocaleString(language, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-function WebdavProgressGrid({ progress }: { progress: Record<AppSyncDomainKey, WebdavDomainProgress> }) {
+function WebdavProgressGrid({ progress, t }: { progress: Record<AppSyncDomainKey, WebdavDomainProgress>; t: Translate }) {
     return (
         <div className="mt-3 grid gap-2">
             {webdavDomainKeys.map((key) => {
@@ -491,9 +535,9 @@ function WebdavProgressGrid({ progress }: { progress: Record<AppSyncDomainKey, W
                 return (
                     <div key={key} className="rounded-md border border-stone-200 px-3 py-2 dark:border-stone-800">
                         <div className="mb-1 flex min-w-0 items-center justify-between gap-3 text-xs">
-                            <span className="shrink-0 font-medium text-stone-700 dark:text-stone-200">{item.label}</span>
+                            <span className="shrink-0 font-medium text-stone-700 dark:text-stone-200">{t(webdavDomainLabelKeys[key])}</span>
                             <span className="min-w-0 truncate text-right text-stone-500">
-                                {item.stage}
+                                {formatWebdavProgressStage(item, t)}
                                 {count ? ` · ${count}` : ""}
                             </span>
                         </div>
@@ -509,14 +553,14 @@ function getWebdavProgressPercent(item: WebdavDomainProgress) {
     if (item.status === "success") return 100;
     if (item.total) return Math.min(100, Math.round(((item.current || 0) / item.total) * 100));
     if (item.status === "exception") return 100;
-    if (item.stage === "等待同步") return 0;
-    if (item.stage === "读取远端清单") return 12;
-    if (item.stage === "读取本地数据") return 24;
-    if (item.stage === "下载缺失媒体") return 36;
-    if (item.stage === "写入本地合并结果") return 58;
-    if (item.stage === "上传新增媒体") return 66;
-    if (item.stage === "媒体已齐全" || item.stage === "媒体无需上传") return 74;
-    if (item.stage.startsWith("上传清单")) return 90;
+    if (item.stage === "waiting") return 0;
+    if (item.stage === "read-remote") return 12;
+    if (item.stage === "read-local") return 24;
+    if (item.stage === "download-missing") return 36;
+    if (item.stage === "apply-merged") return 58;
+    if (item.stage === "upload-new") return 66;
+    if (item.stage === "media-complete" || item.stage === "no-upload") return 74;
+    if (item.stage === "upload-manifest") return 90;
     return item.status === "active" ? 30 : 0;
 }
 
@@ -529,4 +573,20 @@ function formatBytes(bytes: number) {
     if (bytes < 1024) return `${bytes}B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
     return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function formatWebdavProgressStage(item: WebdavDomainProgress, t: Translate) {
+    if (item.stage === "waiting") return t("config.webdav.waiting");
+    return formatWebdavStage(item.stage, t, item.bytes, item.detail);
+}
+
+function formatWebdavSyncStatus(status: WebdavSyncStatus, t: Translate) {
+    if (status.stage === "ready") return t("config.webdav.ready");
+    if (status.stage === "error") return status.detail;
+    return formatWebdavStage(status.stage, t, status.bytes, status.detail);
+}
+
+function formatWebdavStage(stage: AppSyncStage, t: Translate, bytes?: number, detail?: string) {
+    if (stage === "failed" && detail) return detail;
+    return t(webdavStageLabelKeys[stage], { bytes: formatBytes(bytes || 0) });
 }

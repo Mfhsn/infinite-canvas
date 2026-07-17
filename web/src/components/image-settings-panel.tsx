@@ -2,8 +2,9 @@ import { type ReactNode, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import type { AiConfig } from "@/stores/use-config-store";
+import { DREAM_IMAGE_MODELS, modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 import { useI18n } from "@/i18n/use-i18n";
+import { DREAM_IMAGE_RATIOS, DREAM_IMAGE_RESOLUTIONS, dreamImagePreset, dreamImageSelection, type DreamImageRatio, type DreamImageResolution } from "@/lib/dream-image-size";
 
 const qualityOptions = [
     { value: "auto", labelKey: "settings.image.quality.auto" },
@@ -29,6 +30,14 @@ const aspectOptions = [
     { value: "auto", label: "auto", width: 0, height: 0, icon: "auto" },
 ];
 
+const dreamAspectOptions = DREAM_IMAGE_RATIOS.map((value) => {
+    const { width, height } = dreamImagePreset("2k", value);
+    return { value, label: value, width, height, icon: width === height ? "square" : width > height ? "landscape" : "portrait" };
+});
+
+export const imageQualityOptions = qualityOptions;
+export const imageAspectOptions = aspectOptions;
+
 type ImageSettingsPanelProps = {
     config: AiConfig;
     onConfigChange: (key: "quality" | "size" | "count", value: string) => void;
@@ -37,17 +46,30 @@ type ImageSettingsPanelProps = {
     className?: string;
     maxCount?: number;
     quickCount?: number;
+    model?: string;
 };
 
-export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
+export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10, model }: ImageSettingsPanelProps) {
     const { t } = useI18n();
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
-    const quality = config.quality || "auto";
+    const dreamMode = isDreamImageSettings(config, model);
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
-    const selectedAspect = aspectOptions.find((item) => (item.size || item.value) === activeSize || item.value === activeSize);
-    const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0]);
+    const dreamSelection = dreamImageSelection(config.quality, activeSize);
+    const quality = dreamMode ? dreamSelection.resolution : config.quality || "auto";
+    const activeAspectOptions = dreamMode ? dreamAspectOptions : aspectOptions;
+    const selectedAspect = dreamMode ? dreamAspectOptions.find((item) => item.value === dreamSelection.ratio) : aspectOptions.find((item) => (item.size || item.value) === activeSize || item.value === activeSize);
+    const dimensions = dreamMode ? dreamSelection : readSizeDimensions(activeSize, selectedAspect || aspectOptions[0]);
+    const selectResolution = (resolution: DreamImageResolution) => {
+        const preset = dreamImagePreset(resolution, dreamSelection.ratio);
+        onConfigChange("quality", resolution);
+        onConfigChange("size", preset.size);
+    };
     const selectAspect = (value: string) => {
+        if (dreamMode) {
+            onConfigChange("size", dreamImagePreset(dreamSelection.resolution, value as DreamImageRatio).size);
+            return;
+        }
         const option = aspectOptions.find((item) => item.value === value);
         onConfigChange("size", option?.size || option?.value || "auto");
     };
@@ -71,37 +93,49 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
             >
                 {showTitle ? <div className="text-lg font-semibold">{t("settings.image.title")}</div> : null}
                 <div className="space-y-2.5">
-                    <SettingTitle color={theme.node.muted}>{t("settings.image.quality")}</SettingTitle>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {qualityOptions.map((item) => (
-                            <OptionPill key={item.value} selected={quality === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
-                                {t(item.labelKey)}
-                            </OptionPill>
-                        ))}
-                    </div>
+                    <SettingTitle color={theme.node.muted}>{t(dreamMode ? "settings.image.resolution" : "settings.image.quality")}</SettingTitle>
+                    {dreamMode ? (
+                        <div className="grid grid-cols-2 gap-2.5">
+                            {DREAM_IMAGE_RESOLUTIONS.map((resolution) => (
+                                <OptionPill key={resolution} selected={quality === resolution} theme={theme} onClick={() => selectResolution(resolution)}>
+                                    {resolution.toUpperCase()}
+                                </OptionPill>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-4 gap-2.5">
+                            {qualityOptions.map((item) => (
+                                <OptionPill key={item.value} selected={quality === item.value} theme={theme} onClick={() => onConfigChange("quality", item.value)}>
+                                    {t(item.labelKey)}
+                                </OptionPill>
+                            ))}
+                        </div>
+                    )}
                 </div>
                 <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <SettingTitle color={theme.node.muted}>{t("settings.image.size")}</SettingTitle>
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium" style={{ color: theme.node.muted }}>
-                                {t("settings.image.align16")}
-                            </span>
-                            <span title={t("settings.image.align16Tooltip")} onMouseDown={(event) => event.stopPropagation()}>
-                                <Switch size="small" checked={snapDimensionToStep} onChange={setSnapDimensionToStep} />
-                            </span>
-                        </div>
+                        {!dreamMode ? (
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium" style={{ color: theme.node.muted }}>
+                                    {t("settings.image.align16")}
+                                </span>
+                                <span title={t("settings.image.align16Tooltip")} onMouseDown={(event) => event.stopPropagation()}>
+                                    <Switch size="small" checked={snapDimensionToStep} onChange={setSnapDimensionToStep} />
+                                </span>
+                            </div>
+                        ) : null}
                     </div>
                     <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={activeSize === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
+                        <DimensionInput prefix="W" value={dimensions.width} disabled={dreamMode || activeSize === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
                         <span className="text-lg opacity-45">↔</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={activeSize === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
+                        <DimensionInput prefix="H" value={dimensions.height} disabled={dreamMode || activeSize === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
                     </div>
                 </div>
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settings.image.aspectRatio")}</SettingTitle>
-                    <div className="grid grid-cols-4 gap-2.5">
-                        {aspectOptions.map((item) => (
+                    <div className={`grid gap-2.5 ${dreamMode ? "grid-cols-5" : "grid-cols-4"}`}>
+                        {activeAspectOptions.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
@@ -146,10 +180,16 @@ export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; ch
 }
 
 export function imageQualityLabel(value: string, t?: ReturnType<typeof useI18n>["t"]) {
+    if (value === "2k" || value === "4k") return value.toUpperCase();
     const keys = { auto: "settings.image.quality.auto", high: "settings.image.quality.high", medium: "settings.image.quality.medium", low: "settings.image.quality.low" } as const;
     const key = keys[value as keyof typeof keys];
     if (key && t) return t(key);
-    return ({ auto: "自动", high: "高", medium: "中", low: "低" } as Record<string, string>)[value] || value;
+    return ({ auto: "Auto", high: "High", medium: "Medium", low: "Low" } as Record<string, string>)[value] || value;
+}
+
+export function isDreamImageSettings(config: AiConfig, model?: string) {
+    const selectedModel = model || config.model || config.imageModel;
+    return resolveModelChannel(config, selectedModel).apiFormat === "dream" && DREAM_IMAGE_MODELS.includes(modelOptionName(selectedModel) as (typeof DREAM_IMAGE_MODELS)[number]);
 }
 
 export function imageSizeLabel(size: string, t?: ReturnType<typeof useI18n>["t"]) {

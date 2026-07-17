@@ -2,6 +2,7 @@
 .idea
 docs2
 data
+mysql
 docs/.next
 docs/.source
 docs/node_modules
@@ -9,6 +10,8 @@ docs/out
 web/.next
 web/node_modules
 web/out
+storage-server/dist
+storage-server/node_modules
 *.log
 .env*
 !.env.example

@@ -3,6 +3,7 @@ import { Moon, Sun } from "lucide-react";
 import { flushSync } from "react-dom";
 
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/i18n/use-i18n";
 
 export type TransitionVariant = "circle" | "square" | "triangle" | "diamond" | "hexagon" | "rectangle" | "star";
 
@@ -82,6 +83,7 @@ function getThemeTransitionClipPaths(variant: TransitionVariant, cx: number, cy:
 }
 
 export const AnimatedThemeToggler = ({ children, className, duration = 400, variant, fromCenter = false, theme, targetTheme, onThemeChange, ...props }: AnimatedThemeTogglerProps) => {
+    const { t } = useI18n();
     const shape = variant ?? "circle";
     const [isDark, setIsDark] = useState(false);
     const buttonRef = useRef<HTMLButtonElement>(null);
@@ -186,7 +188,7 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
     return (
         <button type="button" ref={buttonRef} onClick={toggleTheme} className={cn(className)} {...props}>
             {children ?? (isDark ? <Sun /> : <Moon />)}
-            <span className="sr-only">{props["aria-label"] || "切换主题"}</span>
+            <span className="sr-only">{props["aria-label"] || t(isDark ? "action.switchToLight" : "action.switchToDark")}</span>
         </button>
     );
 };

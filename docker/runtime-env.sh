@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-ENV_JS=${INFINITE_CANVAS_ENV_JS:-/usr/share/nginx/html/env.js}
+ENV_JS=${INFINITE_CANVAS_ENV_JS:-${STATIC_DIR:-/usr/share/nginx/html}/env.js}
 
 env_json_string() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\r//g'
@@ -25,7 +25,9 @@ write_env_var() {
         VITE_AI_API_FORMAT \
         VITE_AI_BASE_URL \
         VITE_AI_API_KEY \
+        VITE_AI_PLATFORM_ID \
         VITE_AI_MODELS \
+        VITE_AI_TASK_TIMEOUT_MS \
         VITE_DEFAULT_IMAGE_MODEL \
         VITE_DEFAULT_VIDEO_MODEL \
         VITE_DEFAULT_TEXT_MODEL \
@@ -45,3 +47,7 @@ write_env_var() {
     done
     printf '};\n'
 } > "$ENV_JS"
+
+if [ "$#" -gt 0 ]; then
+    exec "$@"
+fi

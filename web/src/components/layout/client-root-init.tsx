@@ -2,9 +2,12 @@ import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { App } from "antd";
 
-import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
+import { createDreamApiChannel, useConfigStore } from "@/stores/use-config-store";
+import { useI18n } from "@/i18n/use-i18n";
+import { getLastStorageError, STORAGE_ERROR_EVENT } from "@/services/storage/types";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
+    const { t } = useI18n();
     const { message } = App.useApp();
     const handledConfigParams = useRef(false);
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -36,13 +39,24 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                             }
                           : channel,
                   )
-                : [createModelChannel({ id: "default", name: "默认渠道", baseUrl: baseUrl || undefined, apiKey: apiKey || "" })],
+                : [createDreamApiChannel({ baseUrl: baseUrl || undefined, apiKey: apiKey || "" })],
         );
         if (baseUrl) updateConfig("baseUrl", baseUrl);
         if (apiKey) updateConfig("apiKey", apiKey);
         openConfigDialog(false);
-        message.success("已导入本地直连配置");
-    }, [config.channels, message, openConfigDialog, updateConfig]);
+        message.success(t("app.localConfigImported"));
+    }, [config.channels, message, openConfigDialog, t, updateConfig]);
+
+    useEffect(() => {
+        const handleStorageError = (event: Event) => {
+            const detail = (event as CustomEvent<string>).detail;
+            message.error({ content: t("error.storage.failed", { detail }), key: "storage-error", duration: 6 });
+        };
+        window.addEventListener(STORAGE_ERROR_EVENT, handleStorageError);
+        const pendingError = getLastStorageError();
+        if (pendingError) message.error({ content: t("error.storage.failed", { detail: pendingError }), key: "storage-error", duration: 6 });
+        return () => window.removeEventListener(STORAGE_ERROR_EVENT, handleStorageError);
+    }, [message, t]);
 
     return <>{children}</>;
 }

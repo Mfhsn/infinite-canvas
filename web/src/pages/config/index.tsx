@@ -1,14 +1,26 @@
-import { AppConfigPanel } from "@/components/layout/app-config-modal";
+import { useEffect } from "react";
+import { Button } from "antd";
+import { useI18n } from "@/i18n/use-i18n";
+import { useConfigStore } from "@/stores/use-config-store";
 
 export default function ConfigPage() {
+    const { t } = useI18n();
+    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+
+    useEffect(() => {
+        openConfigDialog(false);
+    }, [openConfigDialog]);
+
     return (
         <main className="h-full overflow-y-auto bg-background">
             <div className="mx-auto max-w-6xl px-6 py-6">
                 <div className="mb-5">
-                    <h1 className="text-xl font-semibold text-stone-950 dark:text-stone-100">配置与用户偏好</h1>
-                    <p className="mt-1 text-sm text-stone-500">渠道聚合、模型选择、同步偏好和 Codex 连接配置</p>
+                    <h1 className="text-xl font-semibold text-stone-950 dark:text-stone-100">{t("config.title")}</h1>
+                    <p className="mt-1 text-sm text-stone-500">{t("config.pageSubtitle")}</p>
                 </div>
-                <AppConfigPanel />
+                <Button type="primary" onClick={() => openConfigDialog(false)}>
+                    {t("common.configure")}
+                </Button>
             </div>
         </main>
     );

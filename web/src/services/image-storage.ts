@@ -1,7 +1,8 @@
-import localforage from "localforage";
+import { AppError } from "@/lib/app-error";
 
 import { nanoid } from "nanoid";
 import { readImageMeta } from "@/lib/image-utils";
+import { getBlobRepository } from "@/services/storage/runtime";
 
 export type UploadedImage = {
     url: string;
@@ -12,39 +13,29 @@ export type UploadedImage = {
     mimeType: string;
 };
 
-const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
-const objectUrls = new Map<string, string>();
-
 export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
     const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
     const storageKey = `image:${nanoid()}`;
-    await store.setItem(storageKey, blob);
-    const url = URL.createObjectURL(blob);
-    objectUrls.set(storageKey, url);
+    const repository = await getBlobRepository();
+    await repository.put(storageKey, blob);
+    const url = (await repository.resolveUrl(storageKey)) || URL.createObjectURL(blob);
     const meta = await readImageMeta(url);
     return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
-    const cached = objectUrls.get(storageKey);
-    if (cached) return cached;
-    const blob = await store.getItem<Blob>(storageKey);
-    if (!blob) return fallback;
-    const url = URL.createObjectURL(blob);
-    objectUrls.set(storageKey, url);
-    return url;
+    return (await (await getBlobRepository()).resolveUrl(storageKey)) || fallback;
 }
 
 export async function getImageBlob(storageKey: string) {
-    return store.getItem<Blob>(storageKey);
+    return (await getBlobRepository()).get(storageKey);
 }
 
 export async function setImageBlob(storageKey: string, blob: Blob) {
-    await store.setItem(storageKey, blob);
-    const url = URL.createObjectURL(blob);
-    objectUrls.set(storageKey, url);
-    return url;
+    const repository = await getBlobRepository();
+    await repository.put(storageKey, blob);
+    return (await repository.resolveUrl(storageKey)) || URL.createObjectURL(blob);
 }
 
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }) {
@@ -54,21 +45,16 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
 }
 
 export async function deleteStoredImages(keys: Iterable<string>) {
-    await Promise.all(
-        Array.from(new Set(keys)).map(async (key) => {
-            const url = objectUrls.get(key);
-            if (url) URL.revokeObjectURL(url);
-            objectUrls.delete(key);
-            await store.removeItem(key);
-        }),
-    );
+    const repository = await getBlobRepository();
+    await Promise.all(Array.from(new Set(keys)).map((key) => repository.delete(key)));
 }
 
 export async function cleanupUnusedImages(usedData: unknown) {
     const usedKeys = collectImageStorageKeys(usedData);
     const unused: string[] = [];
-    await store.iterate((_value, key) => {
-        if (!usedKeys.has(key)) unused.push(key);
+    const files = await (await getBlobRepository()).list();
+    files.forEach(({ storageKey }) => {
+        if (storageKey.startsWith("image:") && !usedKeys.has(storageKey)) unused.push(storageKey);
     });
     await deleteStoredImages(unused);
 }
@@ -84,7 +70,7 @@ function blobToDataUrl(blob: Blob) {
     return new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = () => reject(new Error("读取图片失败"));
+        reader.onerror = () => reject(new AppError("error.image.readFailed"));
         reader.readAsDataURL(blob);
     });
 }

@@ -1,0 +1,33 @@
+{
+  "scope": "home-ui",
+  "iteration": 3,
+  "threshold": 90,
+  "reference_images": [
+    "/mnt/c/Users/97818/Desktop/project/无限画布/.cp-images/pasted-image-2026-07-14T03-19-05-313Z.png"
+  ],
+  "generated_screenshots": [
+    "/tmp/home-text-1208-dark.png",
+    "/tmp/home-text-1440-dark.png",
+    "/tmp/home-text-390-dark.png",
+    "/tmp/home-text-390-light-en.png"
+  ],
+  "score": 96,
+  "threshold_passed": true,
+  "verdict": "pass",
+  "category_match": true,
+  "differences": [
+    "The revised headline is intentionally smaller than the supplied screenshot to remove the reported excess vertical and horizontal whitespace.",
+    "The color boundary now follows the sentence boundary: the idea stays neutral and the resulting workflow is orange.",
+    "The mobile workflow preview remains below the primary actions so the headline and CTAs retain priority."
+  ],
+  "suggestions": [
+    "Retain explicit line spans instead of returning to automatic text balancing.",
+    "Keep the white/orange boundary aligned with idea versus outcome when future copy changes.",
+    "Retain the current compact clamp range unless the overall hero grid is redesigned."
+  ],
+  "next_actions": [
+    "Run final targeted formatting and TypeScript checks.",
+    "Confirm the headline keys have no stale references."
+  ],
+  "reasoning": "The headline now has three stable, semantically complete lines with a single meaningful color transition. Its reduced clamp range restores balance with the workflow preview and keeps all tested viewport widths free of broken phrases or overflow."
+}

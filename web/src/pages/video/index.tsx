@@ -1,26 +1,44 @@
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, LoaderCircle, Music2, Plus, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Tag, Typography } from "antd";
-import localforage from "localforage";
+import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Segmented, Tag, Typography } from "antd";
 import { nanoid } from "nanoid";
 import { saveAs } from "file-saver";
 
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
-import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
+import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSettingsSummary } from "@/components/video-settings-panel";
+import { ENV_AI_TASK_TIMEOUT_MS } from "@/constant/env";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
-import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
+import {
+    boolConfig,
+    defaultDreamVideoMode,
+    dreamOmniReferenceIssue,
+    isBuiltInDreamVideoConfig,
+    isDreamSeedance20Model,
+    isSeedanceVideoConfig,
+    normalizeDreamVideoDuration,
+    normalizeDreamVideoMode,
+    normalizeDreamVideoRatio,
+    normalizeDreamVideoSeed,
+    normalizeSeedanceRatio,
+    seedanceReferenceLabel,
+    seedanceVideoReferenceError,
+    SEEDANCE_REFERENCE_LIMITS,
+} from "@/lib/seedance-video";
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { useI18n } from "@/i18n/use-i18n";
+import { formatGenerationLogTime, normalizeGenerationLogStatus, type GenerationLogStatus } from "@/lib/generation-log";
+import { localizeError } from "@/lib/app-error";
+import { getDocumentStore } from "@/services/storage/document-store";
 
 type GeneratedVideo = {
     id: string;
@@ -45,7 +63,6 @@ type GenerationLog = {
     createdAt: number;
     title: string;
     prompt: string;
-    time: string;
     model: string;
     config: GenerationLogConfig;
     references: ReferenceImage[];
@@ -55,23 +72,30 @@ type GenerationLog = {
     size: string;
     resolution: string;
     seconds: string;
-    status: "生成中" | "成功" | "失败";
+    status: GenerationLogStatus;
     task?: VideoGenerationTask;
     video?: GeneratedVideo;
     error?: string;
 };
 
-type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark">;
+type StoredGenerationLog = Omit<Partial<GenerationLog>, "status"> & {
+    status?: GenerationLogStatus | "生成中" | "成功" | "失败";
+    time?: string;
+};
+
+type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoMode" | "videoSeed" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark">;
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
 const LOG_STORE_KEY = "infinite-canvas:video_generation_logs";
-const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" });
+const logStore = getDocumentStore("video_generation_logs");
+type ReferenceUploadTarget = "first" | "last" | "image" | "video" | "audio";
 
 export default function VideoPage() {
     const { message } = App.useApp();
     const { t } = useI18n();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const referenceUploadTargetRef = useRef<ReferenceUploadTarget>("image");
     const activeLogIdsRef = useRef<Set<string>>(new Set());
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -97,7 +121,19 @@ export default function VideoPage() {
     const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
-    const canGenerate = Boolean(prompt.trim());
+    const requestConfig = { ...effectiveConfig, model, videoModel: model };
+    const isDreamVideo = isBuiltInDreamVideoConfig(requestConfig);
+    const dreamMode = normalizeDreamVideoMode(effectiveConfig.videoMode, modelOptionName(model));
+    const startEndMode = isDreamVideo && dreamMode === "start-end";
+    const subjectMode = isDreamVideo && dreamMode === "subject";
+    const [firstFrame, lastFrame] = startEndReferenceImages(references);
+    const hasSubjectReference = Boolean(references.length || videoReferences.length || audioReferences.length);
+    const canGenerate = Boolean(prompt.trim()) && (!isDreamVideo || (startEndMode ? Boolean(firstFrame && lastFrame) : hasSubjectReference));
+
+    const selectVideoModel = (value: string) => {
+        updateConfig("videoModel", value);
+        updateConfig("videoMode", defaultDreamVideoMode(modelOptionName(value)));
+    };
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -109,13 +145,49 @@ export default function VideoPage() {
         void refreshLogs();
     }, []);
 
-    const addReferences = async (files?: FileList | null) => {
+    useEffect(() => {
+        if (!isDreamVideo) return;
+        if (effectiveConfig.videoMode !== dreamMode) updateConfig("videoMode", dreamMode);
+        if (dreamMode === "start-end") {
+            setReferences((current) => withStartEndRoles(current));
+            setVideoReferences((current) => (current.length ? [] : current));
+            setAudioReferences((current) => (current.length ? [] : current));
+            return;
+        }
+        setReferences((current) => (current.some((item) => item.videoRole) ? current.map(({ videoRole: _videoRole, ...item }) => item) : current));
+    }, [dreamMode, effectiveConfig.videoMode, isDreamVideo, updateConfig]);
+
+    const openReferenceUpload = (target: ReferenceUploadTarget) => {
+        const input = fileInputRef.current;
+        if (!input) return;
+        referenceUploadTargetRef.current = target;
+        input.accept = target === "first" || target === "last" || target === "image" ? "image/*" : target === "video" ? "video/mp4,video/quicktime,.mp4,.mov" : "audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav";
+        input.multiple = target !== "first" && target !== "last";
+        input.click();
+    };
+
+    const addReferences = async (files?: FileList | null, target = referenceUploadTargetRef.current) => {
         const selectedFiles = Array.from(files || []);
+        if (target === "first" || target === "last") {
+            const file = selectedFiles.find((item) => item.type.startsWith("image/"));
+            if (!file) {
+                message.warning(t("video.imageRequiredForFrame"));
+                return;
+            }
+            if (file.size > SEEDANCE_REFERENCE_LIMITS.imageMaxBytes) {
+                message.warning(t("video.imageTooLarge"));
+                return;
+            }
+            const image = await uploadImage(file);
+            const reference: ReferenceImage = { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, videoRole: target };
+            setReferences((current) => setStartEndReference(current, target, reference));
+            return;
+        }
         const unsupported = selectedFiles.filter((file) => !file.type.startsWith("image/") && !file.type.startsWith("video/") && !isSupportedAudioFile(file));
         if (unsupported.length) message.warning(t("video.unsupportedReferences"));
-        const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= SEEDANCE_REFERENCE_LIMITS.imageMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.images - references.length);
-        const videoFiles = selectedFiles.filter((file) => file.type.startsWith("video/") && file.size <= SEEDANCE_REFERENCE_LIMITS.videoMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.videos - videoReferences.length);
-        const audioFiles = selectedFiles.filter((file) => isSupportedAudioFile(file) && file.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length);
+        const imageFiles = target === "image" ? selectedFiles.filter((file) => file.type.startsWith("image/") && file.size <= SEEDANCE_REFERENCE_LIMITS.imageMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.images - references.length) : [];
+        const videoFiles = target === "video" ? selectedFiles.filter((file) => file.type.startsWith("video/") && file.size <= SEEDANCE_REFERENCE_LIMITS.videoMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.videos - videoReferences.length) : [];
+        const audioFiles = target === "audio" ? selectedFiles.filter((file) => isSupportedAudioFile(file) && file.size <= SEEDANCE_REFERENCE_LIMITS.audioMaxBytes).slice(0, SEEDANCE_REFERENCE_LIMITS.audios - audioReferences.length) : [];
         if (selectedFiles.some((file) => file.type.startsWith("image/") && file.size > SEEDANCE_REFERENCE_LIMITS.imageMaxBytes)) message.warning(t("video.imageTooLarge"));
         if (selectedFiles.some((file) => file.type.startsWith("video/") && file.size > SEEDANCE_REFERENCE_LIMITS.videoMaxBytes)) message.warning(t("video.videoTooLarge"));
         if (selectedFiles.some((file) => isSupportedAudioFile(file) && file.size > SEEDANCE_REFERENCE_LIMITS.audioMaxBytes)) message.warning(t("video.audioTooLarge"));
@@ -131,16 +203,13 @@ export default function VideoPage() {
                 return { id: nanoid(), name: file.name, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs };
             }),
         );
-        const nextAudioReferences = filterAudioReferencesByDuration(
-            audioReferences,
-            await Promise.all(
-                audioFiles.map(async (file) => {
-                    const audio = await uploadMediaFile(file, "audio-reference");
-                    return { id: nanoid(), name: file.name, type: audio.mimeType, url: audio.url, storageKey: audio.storageKey, durationMs: audio.durationMs };
-                }),
-            ),
-            () => message.warning(t("video.audioDurationInvalid")),
+        const uploadedAudioReferences = await Promise.all(
+            audioFiles.map(async (file) => {
+                const audio = await uploadMediaFile(file, "audio-reference");
+                return { id: nanoid(), name: file.name, type: audio.mimeType, url: audio.url, storageKey: audio.storageKey, durationMs: audio.durationMs };
+            }),
         );
+        const nextAudioReferences = subjectMode ? uploadedAudioReferences : filterAudioReferencesByDuration(audioReferences, uploadedAudioReferences, () => message.warning(t("video.audioDurationInvalid")));
         setReferences((value) => [...value, ...nextReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.images));
         setVideoReferences((value) => [...value, ...nextVideoReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
         setAudioReferences((value) => [...value, ...nextAudioReferences].slice(0, SEEDANCE_REFERENCE_LIMITS.audios));
@@ -177,13 +246,25 @@ export default function VideoPage() {
         setStartedAt(batchStartedAt);
         try {
             const task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences);
-            const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task });
+            const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "pending", task });
             await saveLog(log);
             void pollGenerationLog(log, snapshot.config);
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : t("common.generateFailed");
+            const errorMessage = localizeError(error, t, "common.generateFailed");
             setResults([{ id: nanoid(), status: "failed", error: errorMessage }]);
-            await saveLog(buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: performance.now() - batchStartedAt, status: "失败", error: errorMessage }));
+            await saveLog(
+                buildLog({
+                    prompt: snapshot.text,
+                    model,
+                    config: snapshot.config,
+                    references: snapshot.references,
+                    videoReferences: snapshot.videoReferences,
+                    audioReferences: snapshot.audioReferences,
+                    durationMs: performance.now() - batchStartedAt,
+                    status: "failed",
+                    error: errorMessage,
+                }),
+            );
             message.error(errorMessage);
             setRunning(false);
         }
@@ -200,12 +281,30 @@ export default function VideoPage() {
             openConfigDialog(true);
             return null;
         }
+        const snapshotConfig = buildVideoConfig(effectiveConfig, model);
+        if (isBuiltInDreamVideoConfig(snapshotConfig)) {
+            const mode = normalizeDreamVideoMode(snapshotConfig.videoMode, modelOptionName(model));
+            if (mode === "start-end") {
+                const frames = orderedStartEndReferences(references);
+                if (frames.length !== 2) {
+                    message.error(t("video.startEndFramesRequired"));
+                    return null;
+                }
+                return { text, config: snapshotConfig, references: frames, videoReferences: [], audioReferences: [] };
+            }
+            const referenceIssue = dreamOmniReferenceIssue(references, videoReferences, audioReferences);
+            if (referenceIssue) {
+                message.error(t(referenceIssue.key, referenceIssue.params));
+                return null;
+            }
+            return { text, config: snapshotConfig, references: [...references], videoReferences: [...videoReferences], audioReferences: [...audioReferences] };
+        }
         const videoReferenceError = seedanceVideoReferenceError(videoReferences);
         if (videoReferenceError) {
-            message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
+            message.error(`${t(videoReferenceError.key, videoReferenceError.params)} ${t("video.referenceHint")}`);
             return null;
         }
-        return { text, config: buildVideoConfig(effectiveConfig, model), references: [...references], videoReferences: [...videoReferences], audioReferences: [...audioReferences] };
+        return { text, config: snapshotConfig, references: [...references], videoReferences: [...videoReferences], audioReferences: [...audioReferences] };
     };
 
     const retryResult = () => {
@@ -234,9 +333,11 @@ export default function VideoPage() {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
             const stored = await uploadImage(payload.dataUrl);
-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, SEEDANCE_REFERENCE_LIMITS.images));
+            const reference = { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey };
+            setReferences((value) => (startEndMode ? setStartEndReference(value, firstFrame ? "last" : "first", { ...reference, videoRole: firstFrame ? "last" : "first" }) : [...value, reference].slice(0, SEEDANCE_REFERENCE_LIMITS.images)));
         } else if (payload.kind === "video") {
-            setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
+            if (!startEndMode)
+                setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }].slice(0, SEEDANCE_REFERENCE_LIMITS.videos));
         }
         setAssetPickerOpen(false);
     };
@@ -281,7 +382,7 @@ export default function VideoPage() {
 
     const resumePendingLogs = (items: GenerationLog[]) => {
         for (const log of items) {
-            if (log.status === "生成中" && log.task) void pollGenerationLog(log);
+            if (log.status === "pending" && log.task) void pollGenerationLog(log);
         }
     };
 
@@ -293,7 +394,9 @@ export default function VideoPage() {
         setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
         try {
-            for (let attempt = 0; attempt < 120; attempt += 1) {
+            const delayMs = log.task.provider === "seedance" ? 5000 : 2500;
+            const maxAttempts = Math.max(1, Math.ceil(ENV_AI_TASK_TIMEOUT_MS / delayMs));
+            for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
                 const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
                 if (state.status === "completed") {
                     const stored = await storeGeneratedVideo(state.result);
@@ -308,18 +411,18 @@ export default function VideoPage() {
                         mimeType: stored.mimeType,
                     };
                     setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
-                    await saveLog({ ...log, status: "成功", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
+                    await saveLog({ ...log, status: "success", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
                     message.success(t("video.generatedSuccess"));
                     return;
                 }
-                if (state.status === "failed") throw new Error(state.error);
-                if (attempt === 119) throw new Error(t("video.timeout"));
-                await delay(log.task.provider === "seedance" ? 5000 : 2500);
+                if (state.status === "failed") throw state.error;
+                if (attempt === maxAttempts - 1) throw new Error(t("video.timeout"));
+                await delay(delayMs);
             }
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : t("common.generateFailed");
+            const errorMessage = localizeError(error, t, "common.generateFailed");
             setResults([{ id: log.id, status: "failed", error: errorMessage }]);
-            await saveLog({ ...log, status: "失败", durationMs: Date.now() - log.createdAt, error: errorMessage });
+            await saveLog({ ...log, status: "failed", durationMs: Date.now() - log.createdAt, error: errorMessage });
             message.error(errorMessage);
         } finally {
             activeLogIdsRef.current.delete(log.id);
@@ -340,20 +443,30 @@ export default function VideoPage() {
         if (log.config.videoModel || log.model) updateConfig("videoModel", log.config.videoModel || log.model);
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.vquality) updateConfig("vquality", log.config.vquality);
+        if (log.config.videoMode) updateConfig("videoMode", log.config.videoMode);
+        if (log.config.videoSeed) updateConfig("videoSeed", log.config.videoSeed);
         if (log.config.videoSeconds) updateConfig("videoSeconds", log.config.videoSeconds);
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
-        setResults(log.status === "生成中" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: log.video }] : [{ id: log.id, status: "failed", error: log.error || t("common.generateFailed") }]);
+        setResults(log.status === "pending" ? [{ id: log.id, status: "pending" }] : log.video ? [{ id: log.video.id, status: "success", video: log.video }] : [{ id: log.id, status: "failed", error: log.error || t("common.generateFailed") }]);
     };
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
+            <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[260px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[260px_minmax(0,1fr)]">
                 <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
-                    <LogPanel logs={logs} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
+                    <LogPanel
+                        logs={logs}
+                        selectedLogIds={selectedLogIds}
+                        activeLogId={previewLog?.id}
+                        onSelectedLogIdsChange={setSelectedLogIds}
+                        onCreateSession={createSession}
+                        onDeleteSelected={() => setDeleteConfirmOpen(true)}
+                        onPreviewLog={previewGenerationLog}
+                    />
                 </aside>
 
-                <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[420px_minmax(0,1fr)]">
+                <section className="grid gap-3 lg:min-h-0 lg:overflow-hidden xl:grid-cols-[560px_minmax(0,1fr)]">
                     <div className="thin-scrollbar flex flex-col rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto">
                         <div className="flex items-start justify-between gap-3">
                             <h1 className="text-2xl font-semibold text-stone-950 dark:text-stone-100">{t("video.title")}</h1>
@@ -368,6 +481,137 @@ export default function VideoPage() {
                         </div>
 
                         <div className="mt-6 space-y-5">
+                            <VideoModelSetting config={effectiveConfig} model={model} onModelChange={selectVideoModel} openConfigDialog={openConfigDialog} />
+
+                            {isDreamVideo && isDreamSeedance20Model(modelOptionName(model)) ? (
+                                <div className="space-y-2">
+                                    <span className="block text-base font-semibold">{t("settings.video.mode")}</span>
+                                    <Segmented
+                                        block
+                                        value={dreamMode}
+                                        onChange={(value) => updateConfig("videoMode", String(value))}
+                                        options={[
+                                            { value: "subject", label: t("settings.video.modeSubject") },
+                                            { value: "start-end", label: t("settings.video.modeStartEnd") },
+                                        ]}
+                                    />
+                                </div>
+                            ) : null}
+
+                            {startEndMode ? (
+                                <StartEndReferencePanel firstFrame={firstFrame} lastFrame={lastFrame} onUpload={openReferenceUpload} onRemove={(role) => setReferences((current) => current.filter((item) => item.videoRole !== role))} />
+                            ) : (
+                                <>
+                                    <div className="min-w-0">
+                                        <div className="mb-2 flex items-center justify-between gap-3">
+                                            <span className="text-base font-semibold">{t("video.referenceImages")}</span>
+                                            <div className="flex gap-2">
+                                                <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
+                                                    {t("image.clipboard")}
+                                                </Button>
+                                                <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => openReferenceUpload("image")}>
+                                                    {t("common.upload")}
+                                                </Button>
+                                            </div>
+                                        </div>
+                                        <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
+                                            {references.map((item, index) => (
+                                                <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
+                                                    <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
+                                                    <button
+                                                        type="button"
+                                                        className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white"
+                                                        onClick={() => setPrompt((value) => appendReferenceMention(value, "image", index))}
+                                                    >
+                                                        @{seedanceReferenceLabel("image", index)}
+                                                    </button>
+                                                    <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
+                                                    <button
+                                                        type="button"
+                                                        className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"
+                                                        onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
+                                                        aria-label={t("video.referenceImages")}
+                                                    >
+                                                        <Trash2 className="size-3.5" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{t("video.noReferenceImages")}</div> : null}
+                                        </div>
+                                    </div>
+
+                                    <div className="min-w-0">
+                                        <div className="mb-2 flex items-center justify-between gap-3">
+                                            <span className="text-base font-semibold">{t("video.referenceVideos")}</span>
+                                            <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => openReferenceUpload("video")}>
+                                                {t("common.upload")}
+                                            </Button>
+                                        </div>
+                                        <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
+                                            {videoReferences.map((item, index) => (
+                                                <div key={item.id} className="group relative h-20 w-32 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-black dark:border-stone-800">
+                                                    <video src={item.url} className="size-full object-cover" muted preload="metadata" />
+                                                    <button
+                                                        type="button"
+                                                        className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white"
+                                                        onClick={() => setPrompt((value) => appendReferenceMention(value, "video", index))}
+                                                    >
+                                                        @{seedanceReferenceLabel("video", index)}
+                                                    </button>
+                                                    <ReferenceOrderButtons index={index} total={videoReferences.length} onMove={(offset) => setVideoReferences((value) => moveListItem(value, index, offset))} />
+                                                    <button
+                                                        type="button"
+                                                        className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"
+                                                        onClick={() => setVideoReferences((value) => value.filter((ref) => ref.id !== item.id))}
+                                                        aria-label={t("video.referenceVideos")}
+                                                    >
+                                                        <Trash2 className="size-3.5" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            {!videoReferences.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{t("video.noReferenceVideos")}</div> : null}
+                                        </div>
+                                    </div>
+
+                                    <div className="min-w-0">
+                                        <div className="mb-2 flex items-center justify-between gap-3">
+                                            <span className="text-base font-semibold">{t("video.referenceAudios")}</span>
+                                            <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => openReferenceUpload("audio")}>
+                                                {t("common.upload")}
+                                            </Button>
+                                        </div>
+                                        <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
+                                            {audioReferences.map((item, index) => (
+                                                <div key={item.id} className="group relative flex h-20 w-48 shrink-0 flex-col justify-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-2 dark:border-stone-800 dark:bg-stone-900">
+                                                    <div className="flex min-w-0 items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
+                                                        <Music2 className="size-4 shrink-0" />
+                                                        <button
+                                                            type="button"
+                                                            className="shrink-0 rounded bg-stone-200 px-1 text-[10px] text-stone-700 dark:bg-stone-800 dark:text-stone-200"
+                                                            onClick={() => setPrompt((value) => appendReferenceMention(value, "audio", index))}
+                                                        >
+                                                            @{seedanceReferenceLabel("audio", index)}
+                                                        </button>
+                                                        <span className="truncate">{item.name}</span>
+                                                    </div>
+                                                    <audio src={item.url} controls className="h-8 w-full" preload="metadata" />
+                                                    <ReferenceOrderButtons index={index} total={audioReferences.length} onMove={(offset) => setAudioReferences((value) => moveListItem(value, index, offset))} />
+                                                    <button
+                                                        type="button"
+                                                        className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex"
+                                                        onClick={() => setAudioReferences((value) => value.filter((ref) => ref.id !== item.id))}
+                                                        aria-label={t("video.referenceAudios")}
+                                                    >
+                                                        <Trash2 className="size-3.5" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            {!audioReferences.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">{t("video.noReferenceAudios")}</div> : null}
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
                             <div>
                                 <div className="mb-2 flex items-center justify-between gap-3">
                                     <span className="text-base font-semibold">{t("common.prompt")}</span>
@@ -383,84 +627,9 @@ export default function VideoPage() {
                                 <Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={7} placeholder={t("video.promptPlaceholder")} />
                             </div>
 
-                            <div className="min-w-0">
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">{t("video.referenceImages")}</span>
-                                    <div className="flex gap-2">
-                                        <Button size="small" icon={<ClipboardPaste className="size-3.5" />} onClick={() => void addReferencesFromClipboard()}>
-                                            {t("image.clipboard")}
-                                        </Button>
-                                        <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                            {t("common.upload")}
-                                        </Button>
-                                    </div>
-                                </div>
-                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
-                                    {references.map((item, index) => (
-                                        <div key={item.id} className="group relative size-20 shrink-0 overflow-hidden rounded-md border border-stone-200 dark:border-stone-800">
-                                            <img src={item.dataUrl} alt={item.name} className="size-full object-cover" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{videoReferenceLabel("image", index, t)}</span>
-                                            <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
-                                            <button type="button" className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))} aria-label={t("video.referenceImages")}>
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {!references.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{t("video.noReferenceImages")}</div> : null}
-                                </div>
-                            </div>
-
-                            <div className="min-w-0">
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">{t("video.referenceVideos")}</span>
-                                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                        {t("common.upload")}
-                                    </Button>
-                                </div>
-                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
-                                    {videoReferences.map((item, index) => (
-                                        <div key={item.id} className="group relative h-20 w-32 shrink-0 overflow-hidden rounded-md border border-stone-200 bg-black dark:border-stone-800">
-                                            <video src={item.url} className="size-full object-cover" muted preload="metadata" />
-                                            <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{videoReferenceLabel("video", index, t)}</span>
-                                            <ReferenceOrderButtons index={index} total={videoReferences.length} onMove={(offset) => setVideoReferences((value) => moveListItem(value, index, offset))} />
-                                            <button type="button" className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={() => setVideoReferences((value) => value.filter((ref) => ref.id !== item.id))} aria-label={t("video.referenceVideos")}>
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {!videoReferences.length ? <div className="flex min-w-full items-center justify-center text-sm text-stone-500">{t("video.noReferenceVideos")}</div> : null}
-                                </div>
-                            </div>
-
-                            <div className="min-w-0">
-                                <div className="mb-2 flex items-center justify-between gap-3">
-                                    <span className="text-base font-semibold">{t("video.referenceAudios")}</span>
-                                    <Button size="small" icon={<Upload className="size-3.5" />} onClick={() => fileInputRef.current?.click()}>
-                                        {t("common.upload")}
-                                    </Button>
-                                </div>
-                                <div className="hover-scrollbar hover-scrollbar-hint flex min-h-24 w-full min-w-0 max-w-full gap-2 overflow-x-scroll overflow-y-hidden rounded-lg border border-dashed border-stone-300 p-2 pb-3 overscroll-x-contain dark:border-stone-700">
-                                    {audioReferences.map((item, index) => (
-                                        <div key={item.id} className="group relative flex h-20 w-48 shrink-0 flex-col justify-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-2 dark:border-stone-800 dark:bg-stone-900">
-                                            <div className="flex min-w-0 items-center gap-2 text-xs text-stone-500 dark:text-stone-400">
-                                                <Music2 className="size-4 shrink-0" />
-                                                <span className="shrink-0 rounded bg-stone-200 px-1 text-[10px] text-stone-700 dark:bg-stone-800 dark:text-stone-200">{videoReferenceLabel("audio", index, t)}</span>
-                                                <span className="truncate">{item.name}</span>
-                                            </div>
-                                            <audio src={item.url} controls className="h-8 w-full" preload="metadata" />
-                                            <ReferenceOrderButtons index={index} total={audioReferences.length} onMove={(offset) => setAudioReferences((value) => moveListItem(value, index, offset))} />
-                                            <button type="button" className="absolute right-1 top-1 hidden size-6 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={() => setAudioReferences((value) => value.filter((ref) => ref.id !== item.id))} aria-label={t("video.referenceAudios")}>
-                                                <Trash2 className="size-3.5" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                    {!audioReferences.length ? <div className="flex min-w-full items-center justify-center text-center text-sm text-stone-500">{t("video.noReferenceAudios")}</div> : null}
-                                </div>
-                            </div>
-
                             <div className="flex items-center justify-between rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm dark:border-stone-800 dark:bg-stone-900 sm:hidden">
                                 <span className="truncate text-stone-500 dark:text-stone-400">
-                                    {modelOptionLabel(effectiveConfig, model)} · {normalizeResolution(effectiveConfig.vquality)}p · {videoSizeLabel(effectiveConfig.size, t)} · {normalizeVideoSeconds(effectiveConfig.videoSeconds)}s
+                                    {modelOptionLabel(effectiveConfig, model, t)} · {videoSettingsSummary(requestConfig, t)}
                                 </span>
                                 <Button size="small" type="text" icon={<SlidersHorizontal className="size-4" />} onClick={() => setSettingsOpen(true)}>
                                     {t("common.adjust")}
@@ -482,11 +651,19 @@ export default function VideoPage() {
                     <div className="thin-scrollbar rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:min-h-0 lg:overflow-y-auto lg:p-5">
                         <div className="mb-4 flex items-center justify-between gap-3">
                             <h2 className="text-xl font-semibold">{t("video.results")}</h2>
-                            {running ? <Tag className="m-0 px-2 py-1">{t("image.waiting", { time: formatDuration(elapsedMs) })}</Tag> : null}
+                            {running ? <Tag className="m-0 px-2 py-1">{t("image.waiting", { time: formatDuration(elapsedMs, t) })}</Tag> : null}
                         </div>
                         {results.length ? (
                             <div className="grid gap-4">
-                                {results.map((result) => (result.status === "success" && result.video ? <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedVideoCard key={result.id} error={result.error || t("common.generateFailed")} onRetry={retryResult} /> : <PendingVideoCard key={result.id} />))}
+                                {results.map((result) =>
+                                    result.status === "success" && result.video ? (
+                                        <ResultVideoCard key={result.id} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} />
+                                    ) : result.status === "failed" ? (
+                                        <FailedVideoCard key={result.id} error={result.error || t("common.generateFailed")} onRetry={retryResult} />
+                                    ) : (
+                                        <PendingVideoCard key={result.id} />
+                                    ),
+                                )}
                             </div>
                         ) : (
                             <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[560px]">
@@ -500,8 +677,6 @@ export default function VideoPage() {
             <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,video/mp4,video/quicktime,audio/mpeg,audio/wav,audio/x-wav,.mp3,.wav"
-                multiple
                 className="hidden"
                 onChange={(event) => {
                     void addReferences(event.target.files);
@@ -509,10 +684,19 @@ export default function VideoPage() {
                 }}
             />
             <Drawer title={t("common.history")} placement="bottom" size="large" open={logsOpen} onClose={() => setLogsOpen(false)}>
-                <LogPanel logs={logs} selectedLogIds={selectedLogIds} activeLogId={previewLog?.id} onSelectedLogIdsChange={setSelectedLogIds} onCreateSession={createSession} onDeleteSelected={() => setDeleteConfirmOpen(true)} onPreviewLog={previewGenerationLog} />
+                <LogPanel
+                    logs={logs}
+                    selectedLogIds={selectedLogIds}
+                    activeLogId={previewLog?.id}
+                    onSelectedLogIdsChange={setSelectedLogIds}
+                    onCreateSession={createSession}
+                    onDeleteSelected={() => setDeleteConfirmOpen(true)}
+                    onPreviewLog={previewGenerationLog}
+                />
             </Drawer>
             <Drawer title={t("common.settings")} placement="bottom" height="82vh" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
                 <div className="grid grid-cols-2 gap-3 pb-4">
+                    <VideoModelSetting config={effectiveConfig} model={model} onModelChange={selectVideoModel} openConfigDialog={openConfigDialog} />
                     <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} />
                 </div>
             </Drawer>
@@ -526,19 +710,58 @@ export default function VideoPage() {
 }
 
 function GenerationSettings({ config, model, updateConfig, openConfigDialog }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
-    const { t } = useI18n();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
-        <>
-            <label className="col-span-2 block min-w-0 sm:col-span-1">
-                <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">{t("common.model")}</span>
-                <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
-            </label>
-            <div className="col-span-2">
-                <VideoSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
+        <div className="col-span-2">
+            <VideoSettingsPanel config={{ ...config, model, videoModel: model }} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" />
+        </div>
+    );
+}
+
+function VideoModelSetting({ config, model, onModelChange, openConfigDialog }: { config: AiConfig; model: string; onModelChange: (model: string) => void; openConfigDialog: (shouldPromptContinue?: boolean) => void }) {
+    const { t } = useI18n();
+    return (
+        <label className="col-span-2 block min-w-0">
+            <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">{t("common.model")}</span>
+            <ModelPicker config={config} value={model} onChange={onModelChange} capability="video" fullWidth onMissingConfig={() => openConfigDialog(false)} />
+        </label>
+    );
+}
+
+function StartEndReferencePanel({ firstFrame, lastFrame, onUpload, onRemove }: { firstFrame?: ReferenceImage; lastFrame?: ReferenceImage; onUpload: (target: "first" | "last") => void; onRemove: (target: "first" | "last") => void }) {
+    const { t } = useI18n();
+    return (
+        <div className="grid gap-3 sm:grid-cols-2">
+            <FrameReferenceCard title={t("video.firstFrame")} image={firstFrame} onUpload={() => onUpload("first")} onRemove={() => onRemove("first")} />
+            <FrameReferenceCard title={t("video.lastFrame")} image={lastFrame} onUpload={() => onUpload("last")} onRemove={() => onRemove("last")} />
+        </div>
+    );
+}
+
+function FrameReferenceCard({ title, image, onUpload, onRemove }: { title: string; image?: ReferenceImage; onUpload: () => void; onRemove: () => void }) {
+    const { t } = useI18n();
+    return (
+        <div className="min-w-0">
+            <div className="mb-2 text-base font-semibold">{title}</div>
+            <div className="group relative flex aspect-video min-h-36 items-center justify-center overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
+                {image ? (
+                    <img src={image.dataUrl} alt={image.name} className="size-full object-cover" />
+                ) : (
+                    <Button type="text" icon={<Upload className="size-4" />} onClick={onUpload}>
+                        {t("common.upload")}
+                    </Button>
+                )}
+                {image ? (
+                    <>
+                        <Button className="!absolute !inset-0 !h-full !w-full !rounded-none !border-0 !bg-transparent !text-transparent hover:!bg-black/10" onClick={onUpload} aria-label={t("common.upload")} />
+                        <button type="button" className="absolute right-2 top-2 hidden size-7 items-center justify-center rounded bg-black/60 text-white group-hover:flex" onClick={onRemove} aria-label={t("common.delete")}>
+                            <Trash2 className="size-3.5" />
+                        </button>
+                    </>
+                ) : null}
             </div>
-        </>
+        </div>
     );
 }
 
@@ -553,7 +776,7 @@ function ResultVideoCard({ video, onDownload, onSaveAsset }: { video: GeneratedV
                         {video.width}x{video.height}
                     </span>
                     <span>{formatBytes(video.bytes)}</span>
-                    <span>{formatDuration(video.durationMs)}</span>
+                    <span>{formatDuration(video.durationMs, t)}</span>
                 </div>
                 <div className="flex shrink-0 gap-1">
                     <Button size="small" icon={<FolderPlus className="size-3.5" />} onClick={() => onSaveAsset(video)}>
@@ -639,7 +862,14 @@ function LogPanel({
             </div>
             <div className="space-y-3">
                 {logs.map((log) => (
-                    <LogCard key={log.id} log={log} selected={selectedLogIds.includes(log.id)} active={activeLogId === log.id} onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))} onClick={() => onPreviewLog(log)} />
+                    <LogCard
+                        key={log.id}
+                        log={log}
+                        selected={selectedLogIds.includes(log.id)}
+                        active={activeLogId === log.id}
+                        onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))}
+                        onClick={() => onPreviewLog(log)}
+                    />
                 ))}
                 {!logs.length ? <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 dark:border-stone-700">{t("video.noLogs")}</div> : null}
             </div>
@@ -648,13 +878,17 @@ function LogPanel({
 }
 
 function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
-    const { t } = useI18n();
+    const { language, t } = useI18n();
     return (
-        <button type="button" className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`} onClick={onClick}>
+        <button
+            type="button"
+            className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}
+            onClick={onClick}
+        >
             <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2">
                 <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
                 <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold leading-5">{log.title}</div>
+                    <div className="truncate text-sm font-semibold leading-5">{log.title || t("common.untitled")}</div>
                     <div className="mt-2 flex flex-wrap gap-1">
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.size}</Tag>
                         <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.resolution}p</Tag>
@@ -662,34 +896,30 @@ function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: Ge
                     </div>
                 </div>
                 <div className="grid justify-items-end gap-2">
-                    <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color={log.status === "成功" ? "blue" : log.status === "生成中" ? "processing" : "red"}>
+                    <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color={log.status === "success" ? "blue" : log.status === "pending" ? "processing" : "red"}>
                         {videoLogStatusLabel(log.status, t)}
                     </Tag>
                     <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="green">
-                        {formatDuration(log.durationMs)}
+                        {formatDuration(log.durationMs, t)}
                     </Tag>
+                    <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{formatGenerationLogTime(log.createdAt, language)}</Tag>
                 </div>
             </div>
         </button>
     );
 }
 
-function videoReferenceLabel(kind: "image" | "video" | "audio", index: number, t: ReturnType<typeof useI18n>["t"]) {
-    const prefix = kind === "image" ? t("common.image") : kind === "video" ? t("common.video") : t("common.audio");
-    return `${prefix}${index + 1}`;
-}
-
 function videoLogStatusLabel(status: GenerationLog["status"], t: ReturnType<typeof useI18n>["t"]) {
-    if (status === "生成中") return t("video.status.pending");
-    if (status === "成功") return t("video.status.success");
+    if (status === "pending") return t("video.status.pending");
+    if (status === "success") return t("video.status.success");
     return t("video.status.failed");
 }
 
 async function readStoredLogs() {
     if (typeof window === "undefined") return [];
     try {
-        const logs: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
+        const logs: StoredGenerationLog[] = [];
+        await logStore.iterate<StoredGenerationLog, void>((value) => {
             logs.push(value);
         });
         return (await Promise.all(logs.map(normalizeLog))).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -698,7 +928,7 @@ async function readStoredLogs() {
     }
 }
 
-async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
+async function normalizeLog(log: StoredGenerationLog): Promise<GenerationLog> {
     const video = log.video?.storageKey ? { ...log.video, url: await resolveMediaUrl(log.video.storageKey, log.video.url) } : log.video;
     const videoReferences = await Promise.all(
         (log.videoReferences || []).map(async (item) => ({
@@ -722,9 +952,8 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
     return {
         id: log.id || nanoid(),
         createdAt: log.createdAt || Date.now(),
-        title: log.title || log.model || "未命名",
+        title: log.title || log.model || "",
         prompt: log.prompt || "",
-        time: log.time || new Date().toLocaleString("zh-CN", { hour12: false }),
         model: log.model || config.videoModel || "",
         config,
         references,
@@ -734,7 +963,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         size: log.size || config.size || "",
         resolution: normalizeResolution(log.resolution || config.vquality || ""),
         seconds: log.seconds || config.videoSeconds || "",
-        status: log.status || "成功",
+        status: normalizeGenerationLogStatus(log.status, "success"),
         task: log.task,
         video,
         error: log.error,
@@ -749,6 +978,36 @@ function serializeLog(log: GenerationLog): GenerationLog {
         audioReferences: log.audioReferences.map((item) => (item.storageKey ? { ...item, url: "" } : item)),
         video: log.video?.storageKey ? { ...log.video, url: "" } : log.video,
     };
+}
+
+function startEndReferenceImages(items: ReferenceImage[]): [ReferenceImage | undefined, ReferenceImage | undefined] {
+    const first = items.find((item) => item.videoRole === "first") || items.find((item) => !item.videoRole);
+    const last = items.find((item) => item.videoRole === "last") || items.find((item) => item !== first && !item.videoRole);
+    return [first, last];
+}
+
+function orderedStartEndReferences(items: ReferenceImage[]) {
+    return startEndReferenceImages(items).filter((item): item is ReferenceImage => Boolean(item));
+}
+
+function withStartEndRoles(items: ReferenceImage[]) {
+    const [first, last] = startEndReferenceImages(items);
+    const next: ReferenceImage[] = [];
+    if (first) next.push({ ...first, videoRole: "first" });
+    if (last) next.push({ ...last, videoRole: "last" });
+    if (next.length === items.length && next.every((item, index) => item.id === items[index]?.id && item.videoRole === items[index]?.videoRole)) return items;
+    return next;
+}
+
+function setStartEndReference(items: ReferenceImage[], role: "first" | "last", reference: ReferenceImage) {
+    const [first, last] = startEndReferenceImages(items);
+    return withStartEndRoles(role === "first" ? [{ ...reference, videoRole: "first" }, ...(last ? [{ ...last, videoRole: "last" as const }] : [])] : [...(first ? [{ ...first, videoRole: "first" as const }] : []), { ...reference, videoRole: "last" }]);
+}
+
+function appendReferenceMention(prompt: string, kind: "image" | "video" | "audio", index: number) {
+    const token = `@${seedanceReferenceLabel(kind, index)}`;
+    if (prompt.includes(token)) return prompt;
+    return prompt.trimEnd() ? `${prompt.trimEnd()} ${token}` : token;
 }
 
 function isSupportedAudioFile(file: File) {
@@ -793,24 +1052,52 @@ function ReferenceOrderButtons({ index, total, onMove }: { index: number; total:
     );
 }
 
-function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
+function normalizeLogConfig(log: StoredGenerationLog): GenerationLogConfig {
     return {
         model: log.config?.model || log.model || "",
         videoModel: log.config?.videoModel || log.model || "",
         size: log.config?.size || log.size || "",
         vquality: normalizeResolution(log.config?.vquality || log.resolution || ""),
+        videoMode: log.config?.videoMode || "start-end",
+        videoSeed: log.config?.videoSeed || "-1",
         videoSeconds: log.config?.videoSeconds || log.seconds || "",
-        videoGenerateAudio: log.config?.videoGenerateAudio || "true",
+        videoGenerateAudio: log.config?.videoGenerateAudio || "false",
         videoWatermark: log.config?.videoWatermark || "false",
     };
 }
 
-function buildLog({ prompt, model, config, references, videoReferences, audioReferences, durationMs, status, task, video, error }: { prompt: string; model: string; config: AiConfig; references: ReferenceImage[]; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[]; durationMs: number; status: GenerationLog["status"]; task?: VideoGenerationTask; video?: GeneratedVideo; error?: string }): GenerationLog {
+function buildLog({
+    prompt,
+    model,
+    config,
+    references,
+    videoReferences,
+    audioReferences,
+    durationMs,
+    status,
+    task,
+    video,
+    error,
+}: {
+    prompt: string;
+    model: string;
+    config: AiConfig;
+    references: ReferenceImage[];
+    videoReferences: ReferenceVideo[];
+    audioReferences: ReferenceAudio[];
+    durationMs: number;
+    status: GenerationLog["status"];
+    task?: VideoGenerationTask;
+    video?: GeneratedVideo;
+    error?: string;
+}): GenerationLog {
     const logConfig = {
         model: config.model,
         videoModel: config.videoModel,
         size: config.size,
         vquality: normalizeResolution(config.vquality),
+        videoMode: config.videoMode,
+        videoSeed: config.videoSeed,
         videoSeconds: config.videoSeconds,
         videoGenerateAudio: config.videoGenerateAudio,
         videoWatermark: config.videoWatermark,
@@ -818,9 +1105,8 @@ function buildLog({ prompt, model, config, references, videoReferences, audioRef
     return {
         id: nanoid(),
         createdAt: Date.now(),
-        title: prompt.slice(0, 12) || "未命名",
+        title: prompt.slice(0, 12),
         prompt,
-        time: new Date().toLocaleString("zh-CN", { hour12: false }),
         model,
         config: logConfig,
         references,
@@ -838,15 +1124,19 @@ function buildLog({ prompt, model, config, references, videoReferences, audioRef
 }
 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
+    const dream = isBuiltInDreamVideoConfig({ ...config, model, videoModel: model });
     const seedance = isSeedanceVideoConfig({ ...config, model });
+    const modelName = modelOptionName(model);
     return {
         ...config,
         model,
         videoModel: model,
-        size: seedance ? normalizeSeedanceRatio(config.size) : normalizeVideoSize(config.size),
-        videoSeconds: normalizeVideoSeconds(config.videoSeconds),
+        size: dream ? normalizeDreamVideoRatio(config.size, modelName) : seedance ? normalizeSeedanceRatio(config.size) : normalizeVideoSize(config.size),
+        videoMode: dream ? normalizeDreamVideoMode(config.videoMode, modelName) : config.videoMode,
+        videoSeed: dream ? String(normalizeDreamVideoSeed(config.videoSeed)) : config.videoSeed,
+        videoSeconds: dream ? String(normalizeDreamVideoDuration(config.videoSeconds, modelName)) : normalizeVideoSeconds(config.videoSeconds),
         vquality: normalizeResolution(config.vquality),
-        videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, true)),
+        videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, dream ? false : true)),
         videoWatermark: String(boolConfig(config.videoWatermark, false)),
     };
 }

@@ -4,9 +4,11 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "dev": "vite --host 0.0.0.0 --port 3000",
+        "dev": "node scripts/vite-with-env-proxy.mjs --host 0.0.0.0 --port 3000",
         "build": "tsc --noEmit && vite build",
-        "start": "vite preview --host 0.0.0.0 --port 3000",
+        "start": "node scripts/vite-with-env-proxy.mjs preview --host 0.0.0.0 --port 3000",
+        "test": "bun test tests",
+        "i18n:check": "node scripts/check-i18n.mjs",
         "format": "prettier --write .",
         "format:check": "prettier --check ."
     },

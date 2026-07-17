@@ -1,5 +1,7 @@
 import localforage from "localforage";
 
+import { AppError } from "@/lib/app-error";
+
 export type Prompt = {
     id: string;
     title: string;
@@ -19,7 +21,7 @@ type PromptCategory = {
     build: () => Promise<Omit<Prompt, "category" | "githubUrl">[]>;
 };
 
-export const ALL_PROMPTS_OPTION = "全部";
+export const ALL_PROMPTS_OPTION = "__all__";
 
 export type PromptListResponse = {
     items: Prompt[];
@@ -34,7 +36,7 @@ const youMindGptImage2RawBase = "https://raw.githubusercontent.com/YouMind-OpenL
 const youMindNanoBananaProRawBase = "https://raw.githubusercontent.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts/main";
 const davidWuGptImage2RawBase = "https://raw.githubusercontent.com/davidwuw0811-boop/awesome-gpt-image2-prompts/main";
 const cacheTtlMs = 1000 * 60 * 60;
-const promptCacheKey = "third-party-prompts";
+const promptCacheKey = "third-party-prompts-v2";
 const promptCacheStore = localforage.createInstance({ name: "infinite-canvas", storeName: "prompt_cache" });
 
 const categories: PromptCategory[] = [
@@ -107,7 +109,7 @@ async function buildAwesomeGptImagePrompts() {
             const title = firstMatch(block, /^###\s+(.+)$/m).replace(/\[([^\]]+)]\([^)]+\)/g, "$1").trim();
             const prompt = firstMatch(block, /\*\*提示词:\*\*\s*\r?\n\s*```[\w-]*\r?\n(.*?)\r?\n```/s).trim();
             if (!title || !prompt) continue;
-            const images = extractMarkdownImages(awesomeGptImageRawBase, block);
+            const images = extractPromptImages(awesomeGptImageRawBase, block);
             items.push(defaultPrompt(`awesome-gpt-image-${leftPad(items.length + 1)}`, title, prompt, images[0] || "", tags, markdownPreview(images)));
         }
     }
@@ -121,7 +123,7 @@ async function buildAwesomeGpt4oImagePrompts() {
         const title = firstMatch(block, /^###\s+(.+)$/m).trim();
         const prompt = firstMatch(block, /- \*\*提示词文本：\*\*\s*`(.*?)`/s).trim();
         if (!title || !prompt) continue;
-        const images = extractMarkdownImages(awesomeGpt4oImagePromptsBase, block);
+        const images = extractPromptImages(awesomeGpt4oImagePromptsBase, block);
         items.push(defaultPrompt(`awesome-gpt4o-image-prompts-${leftPad(items.length + 1)}`, title, prompt, images[0] || "", ["gpt4o"], markdownPreview(images)));
     }
     return items;
@@ -134,7 +136,7 @@ async function buildYouMindPrompts(baseUrl: string, idPrefix: string, modelTag: 
         const title = firstMatch(block, /^###\s+No\.\s*\d+:\s*(.+)$/m).trim();
         const prompt = firstMatch(block, /#### .*?提示词\s*\r?\n\s*```[\w-]*\r?\n(.*?)\r?\n```/s).trim();
         if (!title || !prompt) continue;
-        const images = extractMarkdownImages(baseUrl, block);
+        const images = extractPromptImages(baseUrl, block);
         items.push(defaultPrompt(`${idPrefix}-${leftPad(items.length + 1)}`, title, prompt, images[0] || "", youMindTags(title, modelTag), markdownPreview(images)));
     }
     return items;
@@ -160,7 +162,7 @@ function defaultPrompt(id: string, title: string, prompt: string, coverUrl: stri
 
 async function fetchText(baseUrl: string, file: string) {
     const response = await fetch(`${baseUrl}/${file}`, { cache: "no-store" });
-    if (!response.ok) throw new Error(`${file} 拉取失败`);
+    if (!response.ok) throw new AppError("error.prompts.fetchFile", { file });
     return response.text();
 }
 
@@ -186,8 +188,10 @@ function firstMatch(value: string, pattern: RegExp) {
     return pattern.exec(value)?.[1] || "";
 }
 
-function extractMarkdownImages(baseUrl: string, markdown: string) {
-    return Array.from(markdown.matchAll(/!\[[^\]]*]\(([^)]+)\)/g), (match) => absoluteImage(baseUrl, match[1])).filter(Boolean);
+export function extractPromptImages(baseUrl: string, markdown: string) {
+    const markdownSources = Array.from(markdown.matchAll(/!\[[^\]]*]\(([^)]+)\)/g), (match) => match[1]);
+    const htmlSources = Array.from(markdown.matchAll(/<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))[^>]*>/gi), (match) => match[1] || match[2] || match[3]);
+    return Array.from(new Set([...markdownSources, ...htmlSources].map((image) => absoluteImage(baseUrl, image.replace(/&amp;/g, "&"))).filter(Boolean)));
 }
 
 function absoluteImage(baseUrl: string, image: string) {
@@ -235,7 +239,7 @@ function leftPad(value: number) {
 }
 
 function isActiveOption(value: string) {
-    return value && value !== "全部" && value !== "all";
+    return value && value !== ALL_PROMPTS_OPTION && value !== "全部" && value !== "all";
 }
 
 export function formatPromptDate(value: string) {

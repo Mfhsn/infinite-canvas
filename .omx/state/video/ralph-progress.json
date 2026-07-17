@@ -1,0 +1,23 @@
+{
+  "score": 97,
+  "threshold": 90,
+  "passed": true,
+  "verdict": "pass",
+  "category_match": true,
+  "checked_at": "2026-07-16T10:15:00+08:00",
+  "reference_context": "User requested visibly different canvas forms for Seedance 1.5 start/end frames and Seedance 2.0 omni references, plus an always-visible generate-audio switch.",
+  "screenshots": [
+    ".omx/visual/canvas-video15-start-end-audio.png",
+    ".omx/visual/canvas-video20-subject-references.png"
+  ],
+  "differences": [
+    "Seedance 1.5 now has a fixed start/end badge and two frame slots, while Seedance 2.0 has a mode selector and separate image/video/audio reference groups."
+  ],
+  "suggestions": [
+    "Optional: add a model-name tooltip to the compact model selector."
+  ],
+  "reasoning": "The two model forms are now immediately distinguishable, the audio switch is visible beside the mode control, and the 2.0 omni form clearly exposes all three supported reference media types without overcrowding the canvas panel.",
+  "next_actions": [
+    "Proceed with final report; visual and interaction verification passed."
+  ]
+}

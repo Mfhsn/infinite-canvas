@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { useI18n } from "@/i18n/use-i18n";
 import { cn } from "@/lib/utils";
+import { UserStatusActions } from "@/components/layout/user-status-actions";
 
 type MobileNavDrawerProps = {
     open: boolean;
@@ -34,6 +35,9 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                         </Link>
                     );
                 })}
+                <div className="mt-5 border-t pt-4">
+                    <UserStatusActions />
+                </div>
             </div>
         </Drawer>
     );

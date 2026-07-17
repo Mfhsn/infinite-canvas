@@ -1,0 +1,20 @@
+{
+  "score": 96,
+  "threshold": 90,
+  "passed": true,
+  "verdict": "pass",
+  "category_match": true,
+  "differences": [
+    "版本号和 GitHub 图标已经移除",
+    "网页/本机模式切换及本机连接页面已经移除",
+    "在线 Agent 的设置入口已明确标记为“网页配置”"
+  ],
+  "suggestions": [
+    "保持当前精简后的顶栏间距",
+    "保留网页 Agent 的模型配置、对话、历史和日志功能"
+  ],
+  "reasoning": "版本和 GitHub 入口已从顶栏移除，Agent 面板只保留网页配置与在线聊天，不再显示模式切换、本机地址、token 或连接状态。",
+  "next_actions": [
+    "完成测试、构建与最终报告"
+  ]
+}

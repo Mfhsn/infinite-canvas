@@ -6,6 +6,7 @@ import { useCanvasStore, type CanvasProject } from "@/stores/canvas/use-canvas-s
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { useI18n } from "@/i18n/use-i18n";
+import { canvasProjectTitle } from "@/lib/canvas/canvas-project-title";
 
 export function CanvasProjectCard({ project }: { project: CanvasProject }) {
     const { t, language } = useI18n();
@@ -37,7 +38,7 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                     onClick={(event) => event.stopPropagation()}
                     onChange={(event) => toggleSelected(project.id, event.target.checked)}
                     className="mt-1 size-4 accent-stone-950 dark:accent-stone-100"
-                    aria-label={t("canvas.selectProject", { title: project.title })}
+                    aria-label={t("canvas.selectProject", { title: canvasProjectTitle(project.title, t) })}
                 />
                 {editing ? (
                     <Input className="min-w-0" value={editingTitle} onClick={(event) => event.stopPropagation()} onChange={(event) => setEditingTitle(event.target.value)} onKeyDown={(event) => event.key === "Enter" && saveTitle()} autoFocus />
@@ -50,7 +51,7 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                             open();
                         }}
                     >
-                        <h2 className="truncate text-xl font-semibold">{project.title}</h2>
+                        <h2 className="truncate text-xl font-semibold">{canvasProjectTitle(project.title, t)}</h2>
                         <p className="mt-3 text-sm leading-6 text-stone-600 dark:text-stone-400">
                             {t("canvas.projectStats", { nodes: project.nodes.length, connections: project.connections.length })}
                         </p>
@@ -67,7 +68,7 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                         </>
                     ) : (
                         <>
-                            <Button type="text" size="small" shape="circle" icon={<Download className="size-4" />} onClick={() => void exportCanvasProjects([project], project.title || t("canvas.title"))} aria-label={t("canvas.export")} />
+                            <Button type="text" size="small" shape="circle" icon={<Download className="size-4" />} onClick={() => void exportCanvasProjects([project], canvasProjectTitle(project.title, t))} aria-label={t("canvas.export")} />
                             <Button type="text" size="small" shape="circle" icon={<Pencil className="size-4" />} onClick={() => startEditing(project.id, project.title)} aria-label={t("canvas.rename")} />
                             <Button type="text" size="small" shape="circle" icon={<Trash2 className="size-4" />} onClick={() => setDeleteIds([project.id])} aria-label={t("canvas.delete")} />
                         </>

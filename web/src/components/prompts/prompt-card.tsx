@@ -1,5 +1,5 @@
-import { Copy } from "lucide-react";
-import type { ReactNode } from "react";
+import { Copy, ImageOff } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Button, Card, Tag } from "antd";
 
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
@@ -31,7 +31,7 @@ export function PromptCard({
             styles={{ body: { padding: 0 } }}
             cover={
                 <button type="button" className="block w-full text-left" onClick={onOpen}>
-                    <img src={item.coverUrl} alt={item.title} className="aspect-[4/3] w-full object-cover" />
+                    <PromptCover src={item.coverUrl} alt={item.title} className="aspect-[4/3] w-full object-cover" />
                 </button>
             }
         >
@@ -59,4 +59,20 @@ export function PromptCard({
             </div>
         </Card>
     );
+}
+
+export function PromptCover({ src, alt, className }: { src: string; alt: string; className: string }) {
+    const [failed, setFailed] = useState(false);
+
+    useEffect(() => setFailed(false), [src]);
+
+    if (!src || failed) {
+        return (
+            <div className={`${className} grid place-items-center bg-stone-100 text-stone-400 dark:bg-stone-900 dark:text-stone-600`} role="img" aria-label={alt}>
+                <ImageOff className="size-8" />
+            </div>
+        );
+    }
+
+    return <img src={src} alt={alt} className={className} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />;
 }

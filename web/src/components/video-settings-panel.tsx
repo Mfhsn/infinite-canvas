@@ -2,7 +2,26 @@ import { type ReactNode } from "react";
 import { Switch } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
-import { boolConfig, isSeedanceFastModel, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
+import {
+    boolConfig,
+    dreamVideoModes,
+    dreamVideoRatioOptions,
+    isBuiltInDreamVideoConfig,
+    isDreamSeedance20Model,
+    isSeedanceFastModel,
+    isSeedanceVideoConfig,
+    normalizeDreamVideoDuration,
+    normalizeDreamVideoMode,
+    normalizeDreamVideoRatio,
+    normalizeDreamVideoSeed,
+    normalizeSeedanceDuration,
+    normalizeSeedanceRatio,
+    normalizeSeedanceResolution,
+    seedanceDurationOptions,
+    seedancePixelLabel,
+    seedanceRatioOptions,
+    seedanceResolutionOptions,
+} from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
 import { useI18n } from "@/i18n/use-i18n";
@@ -23,9 +42,13 @@ const sizeOptions = [
 
 const secondOptions = [6, 10, 12, 16, 20];
 
+export const videoResolutionOptions = resolutionOptions;
+export const videoSizeOptions = sizeOptions;
+export const videoSecondOptions = secondOptions;
+
 type VideoSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark", value: string) => void;
+    onConfigChange: (key: "vquality" | "size" | "videoMode" | "videoSeed" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -33,6 +56,9 @@ type VideoSettingsPanelProps = {
 
 export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useI18n();
+    if (isBuiltInDreamVideoConfig(config)) {
+        return <DreamVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+    }
     if (isSeedanceVideoConfig(config)) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
@@ -78,11 +104,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                             >
                                 <SizePreview width={item.width} height={item.height} color={theme.node.text} />
                                 <span>{t(item.labelKey)}</span>
-                                {item.value === "auto" ? null : (
-                                    <span className="text-[11px] leading-none opacity-55">
-                                        {item.value}
-                                    </span>
-                                )}
+                                {item.value === "auto" ? null : <span className="text-[11px] leading-none opacity-55">{item.value}</span>}
                             </button>
                         ))}
                     </div>
@@ -100,6 +122,84 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
             </div>
         </ImageSettingsTheme>
     );
+}
+
+function DreamVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+    const { t } = useI18n();
+    const model = modelOptionName(config.videoModel || config.model);
+    const mode = normalizeDreamVideoMode(config.videoMode, model);
+    const ratio = normalizeDreamVideoRatio(config.size, model);
+    const duration = normalizeDreamVideoDuration(config.videoSeconds, model);
+    const generateAudio = boolConfig(config.videoGenerateAudio, false);
+    const durationOptions = isDreamSeedance20Model(model) ? [4, 5, 6, 8, 10, 12, 15] : [5, 10];
+
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">{t("settings.video.title")}</div> : null}
+                {dreamVideoModes(model).length > 1 ? (
+                    <SettingGroup title={t("settings.video.mode")} color={theme.node.muted}>
+                        <div className="grid grid-cols-2 gap-2.5">
+                            {dreamVideoModes(model).map((value) => (
+                                <OptionPill key={value} selected={mode === value} theme={theme} onClick={() => onConfigChange("videoMode", value)}>
+                                    {t(value === "subject" ? "settings.video.modeSubject" : "settings.video.modeStartEnd")}
+                                </OptionPill>
+                            ))}
+                        </div>
+                    </SettingGroup>
+                ) : null}
+                <SettingGroup title={t("settings.video.ratio")} color={theme.node.muted}>
+                    <div className={isDreamSeedance20Model(model) ? "grid grid-cols-3 gap-2.5" : "grid grid-cols-5 gap-2"}>
+                        {dreamVideoRatioOptions(model).map((item) => (
+                            <button
+                                key={item.value}
+                                type="button"
+                                className="flex h-[62px] cursor-pointer flex-col items-center justify-center gap-0.5 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80"
+                                style={{ borderColor: ratio === item.value ? theme.node.text : theme.node.stroke, color: theme.node.text }}
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onClick={() => onConfigChange("size", item.value)}
+                            >
+                                <SizePreview width={ratioPreview(item.value).width} height={ratioPreview(item.value).height} color={theme.node.text} />
+                                <span>{seedanceRatioLabel(item.value, t)}</span>
+                                <span className="text-[10px] leading-none opacity-55">{item.value}</span>
+                            </button>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title={t("settings.video.duration")} color={theme.node.muted}>
+                    <div className={isDreamSeedance20Model(model) ? "grid grid-cols-4 gap-2.5" : "grid grid-cols-2 gap-2.5"}>
+                        {durationOptions.map((value) => (
+                            <OptionPill key={value} selected={duration === value} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
+                                {value}s
+                            </OptionPill>
+                        ))}
+                    </div>
+                    {isDreamSeedance20Model(model) ? <NumberInput value={String(duration)} min={4} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} /> : null}
+                </SettingGroup>
+                {!isDreamSeedance20Model(model) ? (
+                    <SettingGroup title="Seed" color={theme.node.muted}>
+                        <NumberInput value={String(normalizeDreamVideoSeed(config.videoSeed))} min={-2147483648} max={2147483647} theme={theme} onChange={(value) => onConfigChange("videoSeed", value)} />
+                        <div className="text-xs leading-5 opacity-70">{t("settings.video.randomSeedHint")}</div>
+                    </SettingGroup>
+                ) : null}
+                <SettingGroup title={t("settings.video.audio")} color={theme.node.muted}>
+                    <div className="grid gap-2 rounded-xl border p-2.5" style={{ borderColor: theme.node.stroke }}>
+                        <SwitchRow label={t("settings.video.generateAudio")} checked={generateAudio} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} />
+                    </div>
+                </SettingGroup>
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
+export function videoSettingsSummary(config: AiConfig, t?: ReturnType<typeof useI18n>["t"]) {
+    if (isBuiltInDreamVideoConfig(config)) {
+        const model = modelOptionName(config.videoModel || config.model);
+        const mode = normalizeDreamVideoMode(config.videoMode, model);
+        const modeLabel = mode === "subject" ? (t ? t("settings.video.modeSubject") : "Subject") : t ? t("settings.video.modeStartEnd") : "Start/end";
+        return `${modeLabel} · ${normalizeDreamVideoRatio(config.size, model)} · ${normalizeDreamVideoDuration(config.videoSeconds, model)}s`;
+    }
+    return `${videoResolutionLabel(config.vquality)} · ${videoSizeLabel(config.size, t)} · ${videoSecondsLabel(config.videoSeconds, t)}`;
 }
 
 function SeedanceVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
@@ -173,7 +273,7 @@ export function videoResolutionLabel(value: string) {
 
 export function videoSizeLabel(value: string, t?: ReturnType<typeof useI18n>["t"]) {
     const ratio = normalizeSeedanceRatio(value);
-    if (value === "adaptive" || value === "auto") return t ? t("settings.video.adaptive") : "自适应";
+    if (value === "adaptive" || value === "auto") return t ? t("settings.video.adaptive") : "Adaptive";
     if (ratio === value) return seedanceRatioLabel(ratio, t) || ratio;
     const size = normalizeVideoSizeValue(value);
     const option = sizeOptions.find((item) => item.value === size);
@@ -181,7 +281,7 @@ export function videoSizeLabel(value: string, t?: ReturnType<typeof useI18n>["t"
 }
 
 export function videoSecondsLabel(value: string, t?: ReturnType<typeof useI18n>["t"]) {
-    if (String(value).trim() === "-1") return t ? t("settings.video.smart") : "智能";
+    if (String(value).trim() === "-1") return t ? t("settings.video.smart") : "Smart";
     return `${value || "6"}s`;
 }
 
@@ -213,16 +313,23 @@ function seedanceRatioLabel(value: string, t?: ReturnType<typeof useI18n>["t"]) 
 
 function seedancePixelDisplay(resolution: string, ratio: string, t?: ReturnType<typeof useI18n>["t"]) {
     const label = seedancePixelLabel(resolution, ratio);
-    return label === "自动匹配" && t ? t("settings.video.autoMatch") : label;
+    return label === "auto" && t ? t("settings.video.autoMatch") : label;
 }
 
 function fallbackVideoSizeLabel(value: string) {
-    return ({ "1280x720": "横屏", "720x1280": "竖屏", "1024x1024": "方形", "1792x1024": "宽屏", "1024x1792": "长图", auto: "自适应" } as Record<string, string>)[value] || value;
+    return ({ "1280x720": "Landscape", "720x1280": "Portrait", "1024x1024": "Square", "1792x1024": "Wide", "1024x1792": "Tall", auto: "Adaptive" } as Record<string, string>)[value] || value;
 }
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
     return (
-        <button type="button" disabled={disabled} className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35" style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={onClick}>
+        <button
+            type="button"
+            disabled={disabled}
+            className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-35"
+            style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={onClick}
+        >
             {children}
         </button>
     );
@@ -242,7 +349,14 @@ function SettingGroup({ title, color, children }: { title: string; color: string
 function ResolutionInput({ value, theme, onChange }: { value: string; theme: CanvasTheme; onChange: (value: string) => void }) {
     return (
         <label className="flex h-9 overflow-hidden rounded-full border text-sm" style={{ borderColor: theme.node.stroke, color: theme.node.text }}>
-            <input type="number" min={1} className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />
+            <input
+                type="number"
+                min={1}
+                className="min-w-0 flex-1 bg-transparent px-3 text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                value={value}
+                onChange={(event) => onChange(event.target.value)}
+                onMouseDown={(event) => event.stopPropagation()}
+            />
             <span className="grid w-7 place-items-center pr-1" style={{ color: theme.node.muted }}>
                 p
             </span>
@@ -256,13 +370,32 @@ function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: 
             <span className="grid w-9 place-items-center" style={{ color: theme.node.muted }}>
                 {prefix}
             </span>
-            <input type="number" min={1} disabled={disabled} className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" value={value || ""} onChange={(event) => onChange(Number(event.target.value) || null)} onMouseDown={(event) => event.stopPropagation()} />
+            <input
+                type="number"
+                min={1}
+                disabled={disabled}
+                className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                value={value || ""}
+                onChange={(event) => onChange(Number(event.target.value) || null)}
+                onMouseDown={(event) => event.stopPropagation()}
+            />
         </label>
     );
 }
 
 function NumberInput({ value, min, max, theme, onChange }: { value: string; min: number; max: number; theme: CanvasTheme; onChange: (value: string) => void }) {
-    return <input type="number" min={min} max={max} className="h-9 rounded-full border bg-transparent px-3 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }} value={value} onChange={(event) => onChange(event.target.value)} onMouseDown={(event) => event.stopPropagation()} />;
+    return (
+        <input
+            type="number"
+            min={min}
+            max={max}
+            className="h-9 rounded-full border bg-transparent px-3 text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            style={{ borderColor: theme.node.stroke, color: theme.node.text, WebkitTextFillColor: theme.node.text }}
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            onMouseDown={(event) => event.stopPropagation()}
+        />
+    );
 }
 
 function SizePreview({ width, height, color }: { width: number; height: number; color: string }) {

@@ -1,11 +1,12 @@
 import { create } from "zustand";
 
 import type { CanvasAgentOp } from "@/lib/canvas/canvas-agent-ops";
+import type { I18nKey, I18nParams } from "@/i18n/messages";
 
 export type AgentChatRole = "user" | "assistant" | "system" | "tool" | "error";
 export type AgentAttachment = { id: string; name: string; type: string; size: number; url: string; dataUrl: string };
-export type AgentChatItem = { id: string; role: AgentChatRole; title?: string; text: string; meta?: string; detail?: unknown; attachments?: AgentAttachment[]; streamId?: string };
-export type AgentEventLog = { id: string; time: string; title: string; text: string; raw?: unknown };
+export type AgentChatItem = { id: string; role: AgentChatRole; title?: string; titleKey?: I18nKey; titleParams?: I18nParams; text: string; textKey?: I18nKey; textParams?: I18nParams; meta?: string; detail?: unknown; attachments?: AgentAttachment[]; streamId?: string };
+export type AgentEventLog = { id: string; time: string; title: string; titleKey?: I18nKey; titleParams?: I18nParams; text: string; raw?: unknown };
 export type AgentPendingToolCall = { requestId: string; name: string; input?: { ops?: CanvasAgentOp[] } };
 export type AgentThreadSummary = { id: string; preview: string; name?: string | null; cwd?: string; status?: string; source?: unknown; createdAt?: number; updatedAt?: number };
 export type AgentPanelTab = "chat" | "setup" | "history" | "log";
@@ -55,7 +56,7 @@ export const useCanvasAgentStore = create<CanvasAgentStore>((set) => ({
     loadingThreads: false,
     activeTab: "setup",
     confirmTools: true,
-    activity: "就绪",
+    activity: "idle",
     connectError: "",
     pendingTool: null,
     setAgentState: (patch) => set(patch),

@@ -48,8 +48,8 @@ AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器�
 git clone git@github.com:basketikun/infinite-canvas.git
 cd infinite-canvas
 cd web
-bun install
-bun run dev
+  bun install
+  bun run dev
 ```
 
 Docker 运行：
@@ -76,7 +76,89 @@ https://canvas.best?apiKey={key}&baseUrl={address}
 
 ## 环境文件配置
 
-需要统一预置 API 渠道时，可以复制 `.env.example` 为 `.env`（Docker Compose）或复制到 `web/.env.local`（本地 Vite 开发），填写 `VITE_AI_API_FORMAT`、`VITE_AI_BASE_URL`、`VITE_AI_MODELS` 和默认模型等变量。`VITE_AI_CONFIG_OVERRIDE=true` 会在启动时用环境变量覆盖浏览器本地保存的渠道/模型配置。
+### 数据存储切换
+
+默认使用浏览器 localForage/IndexedDB 保存数据。需要让画布、素材、图片/视频生成记录以及图片、视频、音频在设备间共享时，在根目录 `.env` 中切换为 MySQL：
+
+```env
+DATA_STORAGE_DRIVER=mysql
+STORAGE_NAMESPACE=default
+STORAGE_MAX_FILE_MB=128
+STORAGE_MAX_DOCUMENT_MB=16
+
+MYSQL_HOST=mysql
+MYSQL_PORT=3306
+MYSQL_DATABASE=infinite_canvas
+MYSQL_USER=infinite_canvas
+MYSQL_PASSWORD=请设置独立密码
+MYSQL_ROOT_PASSWORD=请设置独立Root密码
+MYSQL_CONNECTION_LIMIT=10
+MYSQL_CONNECT_ATTEMPTS=30
+MYSQL_CONNECT_RETRY_MS=2000
+MYSQL_SSL=false
+```
+
+然后通过 Compose 启动应用和 MySQL：
+
+```bash
+docker compose up -d
+```
+
+切换回 `DATA_STORAGE_DRIVER=browser` 并重启后，应用重新读取当前浏览器原有数据。两种驱动不会隐式双写，也不会在 MySQL 故障时自动降级，避免产生互相覆盖的两份数据。
+
+首次启用 MySQL 后，可在“配置 -> 数据存储”中执行“导入到 MySQL”。导入会先上传媒体文件，再导入画布、素材和生成记录；可以重复执行，且不会删除浏览器中的原数据。
+
+`MYSQL_*`、`DATA_STORAGE_DRIVER` 等变量只由服务端读取，不要增加 `VITE_` 前缀。所有 `VITE_*` 变量都会进入浏览器。MySQL 模式应同时把服务端 `STORAGE_MAX_FILE_MB` 和 MySQL `max_allowed_packet` 设置得大于最大媒体文件；Compose 默认将后者设置为 256MB。
+
+当前 MySQL 模式按单用户自托管设计，`STORAGE_NAMESPACE` 用于部署级数据隔离，但 Storage API 本身不提供账号登录。不要在没有额外认证和访问控制的情况下把它作为多人公网服务。
+
+本地开发 MySQL 模式需要先启动 `storage-server`，再启动 Vite：
+
+```bash
+cd storage-server
+npm install
+DATA_STORAGE_DRIVER=mysql MYSQL_HOST=127.0.0.1 npm start
+
+# 另一个终端
+cd web
+DATA_STORAGE_DRIVER=mysql STORAGE_API_URL=http://127.0.0.1:3001 npm run dev
+```
+
+存储驱动只在启动时读取，修改 `.env` 后必须重启服务。
+
+### AI 渠道配置
+
+项目默认只内置“API接口示例”渠道，并严格提供以下模型：
+
+- 图片：`doubao-seedream-4.5`（默认）、`doubao-seedream-5-0-260128`
+- 视频：`doubao-seedance-1-5-pro-251215`（默认）、`doubao-seedance-2-0-260128`
+- 音频：`tts-synthesize`（TTS 端点标识）
+
+复制根目录 `.env.example` 为 `.env` 后即可同时供 Docker Compose 和本地 Vite 开发读取；`VITE_AI_BASE_URL` 配置接口前缀，`VITE_AI_API_KEY` 配置固定 Bearer Token，`VITE_AI_PLATFORM_ID` 配置 Dream 请求中的 `platform_id`（当前文档要求使用 `6`）。`VITE_AI_MODELS` 留空时使用上述内置模型；如需接入其他模型，可通过环境变量定义自有渠道及其模型列表，不会扩充内置渠道。
+
+图片请求支持提示词、参考图、宽高、生成数量和 `platform_id`。选择分辨率和比例后，前端会将配置转换为明确的 `width`、`height` 数字；4K 的宽高分别为对应 2K 尺寸的 2 倍：
+
+| 比例 | 2K        | 4K        |
+| ---- | --------- | --------- |
+| 1:1  | 2048×2048 | 4096×4096 |
+| 4:3  | 2304×1728 | 4608×3456 |
+| 3:4  | 1728×2304 | 3456×4608 |
+| 3:2  | 2496×1664 | 4992×3328 |
+| 2:3  | 1664×2496 | 3328×4992 |
+| 16:9 | 2560×1440 | 5120×2880 |
+| 9:16 | 1440×2560 | 2880×5120 |
+| 21:9 | 3024×1296 | 6048×2592 |
+| 9:21 | 1296×3024 | 2592×6048 |
+
+参考图会先以 `multipart/form-data` 上传到 `/api/v1/upload/upload/image`，再把响应中的素材 `id` 放入生成请求的 `image_asset_ids`，不会把浏览器本地 URL 直接作为素材 ID。内置视频生成的提示词必填：`doubao-seedance-1-5-pro-251215` 仅支持首尾帧，必须上传首帧和尾帧各一张，时长为 5 或 10 秒，并支持 Seed；`doubao-seedance-2-0-260128` 支持首尾帧和全能参考，时长为 4-15 秒。全能参考固定使用 `subject2video`，最多接收 9 张图片、3 个视频和 3 个音频；音频直接上传到 `/api/v1/upload/upload/audio`，视频先通过 `/api/v1/upload/upload/chunk` 分片上传，再由 `/api/v1/upload/upload/video` 合并，最终分别传入 `audio_ids` 和 `video_ids`。
+
+当前实现不会调用登录或 Refresh Token 接口。更新 Token 时直接修改 `.env` 中的 `VITE_AI_API_KEY`，然后重启 Docker 容器或本地开发服务器。建议保持 `VITE_AI_CONFIG_OVERRIDE=true`，确保 `.env` 中的 URL、Token、platform_id 和默认模型覆盖浏览器本地保存的旧配置。
+
+如果 API 的 HTTP 地址会跳转到证书不包含该 IP 的 HTTPS 地址，可在 `.env` 设置 `VITE_AI_TLS_SERVER_NAME`。当前内置服务在 TLS ClientHello 携带 SNI 时会重置连接，因此 IP 配置还需设置 `VITE_AI_TLS_DISABLE_SNI=true`；本地 Vite 会通过同源 `/__dream_api_proxy` 连接固定的 `VITE_AI_BASE_URL` 主机，不发送 SNI，但仍使用 `VITE_AI_TLS_SERVER_NAME` 校验证书，代理目标不能由浏览器请求修改。若连接恢复后返回 `401 令牌无效或已过期`，说明网络与 TLS 已正常，应替换 `.env` 中的固定 Token 并重启开发服务器。
+
+图片、视频、局部重绘和智能扩图接口返回 `task_id` 后，前端会先查询 `/api/v1/task/{task_id}/status`：`done=true` 时再读取 `/api/v1/task/{task_id}/results`，`failed=true` 时读取 `/api/v1/task/{task_id}` 的 `error_message`。图片结果兼容 `file_url`、`image_url`、`file_path`、`url`，以及当前任务接口实际用于返回 JPEG 的 `video_url`，仅在没有完整资源字段时使用 `thumbnail_url`；视频读取 `video_url`；TTS 直接读取同步响应中的 `audio_url`。`/storage/...` 等相对地址会自动拼接 `VITE_AI_BASE_URL`，同源媒体下载会继续携带固定 Bearer Token。
+
+本地 Vite 开发时，项目会把缺少 CORS 响应头的火山 TOS 结果改写到同源 `/__dream_media_proxy`，再保存到浏览器本地存储。该代理仅允许 HTTPS `*.volces.com`，拒绝内网或任意外部地址；如使用其他静态部署方式，仍应由部署层或上游存储配置等价的受限媒体代理/CORS。
 
 注意：前端直连模式下，环境变量会下发到浏览器，不适合在公网多人环境中放私密 API Key。
 

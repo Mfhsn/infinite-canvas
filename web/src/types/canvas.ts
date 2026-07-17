@@ -1,3 +1,5 @@
+import type { I18nKey, I18nParams } from "@/i18n/messages";
+
 export type Position = {
     x: number;
     y: number;
@@ -36,8 +38,12 @@ export type CanvasNodeMetadata = {
     count?: number;
     seconds?: string;
     vquality?: string;
+    videoMode?: string;
+    videoSeed?: string;
     generateAudio?: string;
     watermark?: string;
+    videoFirstFrameNodeId?: string;
+    videoLastFrameNodeId?: string;
     audioVoice?: string;
     audioFormat?: string;
     audioSpeed?: string;
@@ -94,7 +100,11 @@ export type CanvasAssistantMessage = {
     id: string;
     role: "user" | "assistant" | "system" | "tool" | "error";
     title?: string;
+    titleKey?: I18nKey;
+    titleParams?: I18nParams;
     text: string;
+    textKey?: I18nKey;
+    textParams?: I18nParams;
     meta?: string;
     detail?: unknown;
     references?: CanvasAssistantReference[];

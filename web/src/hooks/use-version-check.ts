@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { App } from "antd";
 import { APP_VERSION } from "@/constant/env";
 import { parseChangelog, type ReleaseInfo } from "@/lib/release";
+import { useI18n } from "@/i18n/use-i18n";
 
 const latestVersionUrl = "https://raw.githubusercontent.com/basketikun/infinite-canvas/main/VERSION";
 const latestChangelogUrl = "https://raw.githubusercontent.com/basketikun/infinite-canvas/main/CHANGELOG.md";
@@ -23,6 +24,7 @@ function isNewerVersion(latestVersion: string, currentVersion: string) {
 }
 
 export function useVersionCheck() {
+    const { t } = useI18n();
     const currentVersion = APP_VERSION;
     const { message } = App.useApp();
     const localReleases = useMemo(readLocalReleases, []);
@@ -49,23 +51,23 @@ export function useVersionCheck() {
             setChecking(true);
             try {
                 const [versionResponse, changelogResponse] = await Promise.all([fetch(latestVersionUrl), fetch(latestChangelogUrl)]);
-                if (!versionResponse.ok) throw new Error("版本读取失败");
-                if (!changelogResponse.ok) throw new Error("更新日志读取失败");
+                if (!versionResponse.ok) throw new Error("Failed to read version");
+                if (!changelogResponse.ok) throw new Error("Failed to read changelog");
                 const [version, changelog] = await Promise.all([versionResponse.text(), changelogResponse.text()]);
                 setLatestVersion(version.trim() || currentVersion);
                 if (changelog.trim()) setReleases(parseChangelog(changelog));
-                if (showMessage) message.success("已获取最新版本信息");
+                if (showMessage) message.success(t("release.fetched"));
                 return true;
             } catch {
                 setLatestVersion(currentVersion);
                 setReleases(localReleases);
-                if (showMessage) message.error("获取最新版本信息失败");
+                if (showMessage) message.error(t("release.fetchFailed"));
                 return false;
             } finally {
                 setChecking(false);
             }
         },
-        [currentVersion, localReleases, message],
+        [currentVersion, localReleases, message, t],
     );
 
     useEffect(() => {

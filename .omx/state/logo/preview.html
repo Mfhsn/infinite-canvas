@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; width: 720px; min-height: 420px; padding: 40px; background: #f5f5f4; color: #1c1917; font-family: Arial, sans-serif; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+      .card { min-height: 150px; padding: 24px; border: 1px solid #d6d3d1; border-radius: 20px; background: #fff; }
+      .row { display: flex; align-items: center; gap: 16px; }
+      .mask { display: inline-block; flex: none; background: currentColor; mask: url(../../../web/public/logo.svg) center / contain no-repeat; -webkit-mask: url(../../../web/public/logo.svg) center / contain no-repeat; }
+      .s20 { width: 20px; height: 20px; }
+      .s24 { width: 24px; height: 24px; }
+      .s64 { width: 64px; height: 64px; }
+      .s112 { width: 112px; height: 112px; }
+      h1 { margin: 0 0 24px; font-size: 24px; }
+      h2 { margin: 0 0 18px; font-size: 14px; color: #78716c; }
+      strong { font-size: 16px; }
+      @media (prefers-color-scheme: dark) {
+        body { background: #0c0a09; color: #fafaf9; }
+        .card { background: #1c1917; border-color: #44403c; }
+        h2 { color: #a8a29e; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Infinite Canvas · Logo preview</h1>
+    <div class="grid">
+      <section class="card">
+        <h2>Application header · CSS mask</h2>
+        <div class="row"><span class="mask s20"></span><strong>Infinite Canvas</strong></div>
+      </section>
+      <section class="card">
+        <h2>Documentation header · SVG image</h2>
+        <div class="row"><img src="../../../docs/public/logo.svg" class="s24" /><strong>Infinite Canvas</strong></div>
+      </section>
+      <section class="card">
+        <h2>64 px</h2>
+        <span class="mask s64"></span>
+      </section>
+      <section class="card">
+        <h2>112 px</h2>
+        <span class="mask s112"></span>
+      </section>
+    </div>
+  </body>
+</html>

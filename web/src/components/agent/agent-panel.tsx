@@ -4,13 +4,16 @@ import { Button, Switch, Tooltip } from "antd";
 import { motion } from "motion/react";
 
 import { CanvasLocalAgentPanel } from "@/components/canvas/canvas-local-agent-panel";
+import type { CanvasAgentOp, CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { CANVAS_AGENT_PANEL_MOTION_MS, useAgentStore } from "@/stores/use-agent-store";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useI18n } from "@/i18n/use-i18n";
 
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
 
-export function AgentPanel() {
+export function AgentPanel({ snapshot, canUndoOps, onApplyOps, onUndoOps }: { snapshot: CanvasAgentSnapshot; canUndoOps: boolean; onApplyOps: (ops: CanvasAgentOp[]) => unknown; onUndoOps: () => CanvasAgentSnapshot | null }) {
+    const { t } = useI18n();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const width = useAgentStore((state) => state.width);
     const [resizing, setResizing] = useState(false);
@@ -20,7 +23,6 @@ export function AgentPanel() {
     const confirmTools = useAgentStore((state) => state.confirmTools);
     const setAgentState = useAgentStore((state) => state.setAgentState);
     const closePanel = useAgentStore((state) => state.closePanel);
-
 
     const startResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
         event.preventDefault();
@@ -59,7 +61,7 @@ export function AgentPanel() {
                 transition={{ duration: resizing ? 0 : PANEL_MOTION_SECONDS, ease: [0.22, 1, 0.36, 1] }}
                 style={{ width, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
             >
-                <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label="调整右侧面板宽度" />
+                <button type="button" className="absolute inset-y-0 left-0 z-40 w-4 -translate-x-1/2 cursor-col-resize" onPointerDown={startResize} aria-label={t("agent.resizePanel")} />
                 <header className="flex h-14 shrink-0 items-center justify-between border-b px-4" style={{ borderColor: theme.node.stroke }}>
                     <div className="flex min-w-0 items-center gap-2">
                         <span className="grid size-8 place-items-center rounded-lg">
@@ -67,20 +69,22 @@ export function AgentPanel() {
                         </span>
                         <div className="min-w-0">
                             <div className="text-base font-semibold leading-5">Agent</div>
-                            <div className="truncate text-xs" style={{ color: theme.node.muted }}>全站助手</div>
+                            <div className="truncate text-xs" style={{ color: theme.node.muted }}>
+                                {t("agent.siteAssistant")}
+                            </div>
                         </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                         <label className="flex items-center gap-1.5 text-xs" style={{ color: theme.node.muted }}>
                             <Switch size="small" checked={confirmTools} onChange={(confirmTools) => setAgentState({ confirmTools })} />
-                            工具确认
+                            {t("agent.toolConfirmation")}
                         </label>
-                        <Tooltip title="收起对话">
+                        <Tooltip title={t("agent.collapseChat")}>
                             <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" style={{ color: theme.node.muted }} icon={<PanelRightClose className="size-4" />} onClick={closePanel} />
                         </Tooltip>
                     </div>
                 </header>
-                <CanvasLocalAgentPanel embedded />
+                <CanvasLocalAgentPanel embedded snapshot={snapshot} canUndoOps={canUndoOps} onApplyOps={onApplyOps} onUndoOps={onUndoOps} />
             </motion.aside>
         </motion.div>
     );
