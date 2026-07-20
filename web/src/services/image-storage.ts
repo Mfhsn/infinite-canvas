@@ -2,6 +2,7 @@ import { AppError } from "@/lib/app-error";
 
 import { nanoid } from "nanoid";
 import { readImageMeta } from "@/lib/image-utils";
+import { downloadBlobForStorage } from "@/services/file-storage";
 import { getBlobRepository } from "@/services/storage/runtime";
 
 export type UploadedImage = {
@@ -14,7 +15,7 @@ export type UploadedImage = {
 };
 
 export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
-    const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+    const blob = typeof input === "string" ? await downloadBlobForStorage(input) : input;
     const storageKey = `image:${nanoid()}`;
     const repository = await getBlobRepository();
     await repository.put(storageKey, blob);

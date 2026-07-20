@@ -4,7 +4,7 @@ import { ENV_AI_TASK_TIMEOUT_MS } from "@/constant/env";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { AppError, requestError } from "@/lib/app-error";
 import type { I18nKey } from "@/i18n/messages";
-import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { downloadBlobForStorage, getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { pollDreamVideoTask, requestDreamMediaBlob, requestDreamVideoTask } from "@/services/api/dream";
@@ -83,7 +83,15 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
 
 export async function storeGeneratedVideo(result: VideoGenerationResult): Promise<UploadedFile> {
     if (result.blob) return uploadMediaFile(result.blob, "video");
-    if (result.url) return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
+    if (result.url) {
+        try {
+            const blob = await downloadBlobForStorage(result.url, result.mimeType || "video/mp4");
+            return uploadMediaFile(blob, "video");
+        } catch (error) {
+            if (error instanceof AppError) throw error;
+            throw new AppError("error.video.downloadFailed", undefined, { rawMessage: error instanceof Error ? error.message : undefined });
+        }
+    }
     throw new AppError("error.video.emptyResult");
 }
 

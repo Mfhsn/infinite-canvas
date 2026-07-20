@@ -16,6 +16,8 @@ const runtimeEnv = typeof window === "undefined" ? undefined : window.__INFINITE
 
 export const DOCS_URL = envString("VITE_DOC_URL") || "https://docs.canvas.best";
 export const ENV_AI_PLATFORM_ID = envInteger("VITE_AI_PLATFORM_ID", 6);
+export const ENV_AI_LLM_URL = envString("VITE_AI_LLM_URL") || "https://106.75.147.147/api/v1/ai-service/llm/chat";
+export const ENV_AI_LLM_PLATFORM_CODE = envString("VITE_AI_LLM_PLATFORM_CODE") || "ucloud";
 export const ENV_AI_CHANNELS = envAiChannels();
 export const ENV_AI_CONFIG_OVERRIDE = envBoolean("VITE_AI_CONFIG_OVERRIDE");
 export const ENV_AI_TASK_TIMEOUT_MS = envPositiveInteger("VITE_AI_TASK_TIMEOUT_MS", 15 * 60 * 1000);

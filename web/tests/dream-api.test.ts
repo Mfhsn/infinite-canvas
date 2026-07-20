@@ -59,9 +59,9 @@ describe("Dream media proxy", () => {
     });
 
     test("rewrites only requests belonging to the configured Dream API origin", () => {
-        expect(dreamApiProxyUrl("http://106.75.147.147/api/v1/task/example/status", "http://106.75.147.147", true)).toBe("/__dream_api_proxy/api/v1/task/example/status");
-        expect(dreamApiProxyUrl("https://cdn.example.test/output.jpg", "http://106.75.147.147", true)).toBe("https://cdn.example.test/output.jpg");
-        expect(dreamApiProxyUrl("http://106.75.147.147/api/v1/task/example/status", "http://106.75.147.147", false)).toBe("http://106.75.147.147/api/v1/task/example/status");
+        expect(dreamApiProxyUrl("https://106.75.147.147/api/v1/task/example/status", "https://106.75.147.147", true)).toBe("/__dream_api_proxy/api/v1/task/example/status");
+        expect(dreamApiProxyUrl("https://cdn.example.test/output.jpg", "https://106.75.147.147", true)).toBe("https://cdn.example.test/output.jpg");
+        expect(dreamApiProxyUrl("https://106.75.147.147/api/v1/task/example/status", "https://106.75.147.147", false)).toBe("https://106.75.147.147/api/v1/task/example/status");
     });
 });
 
@@ -210,6 +210,88 @@ describe("Dream image request", () => {
     });
 });
 
+describe("Dream LLM request", () => {
+    test("uses the built-in HTTPS endpoint and documented request envelope", async () => {
+        const post = spyOn(axios, "post").mockResolvedValue({
+            data: {
+                code: 0,
+                message: "成功",
+                data: { content: "这是模型回复" },
+            },
+        });
+        try {
+            const { requestImageQuestion } = await import("@/services/api/image");
+            const { dreamLlmApiUrl } = await import("@/services/api/dream-llm");
+            const { defaultConfig } = await import("@/stores/use-config-store");
+            const config = { ...configuredDreamConfig(defaultConfig, "doubao-1.5-pro"), systemPrompt: "你是画布助手" };
+            const deltas: string[] = [];
+
+            const answer = await requestImageQuestion(config, [{ role: "user", content: "你好" }], (text) => deltas.push(text));
+
+            expect(answer).toBe("这是模型回复");
+            expect(deltas).toEqual(["这是模型回复"]);
+            expect(post.mock.calls[0]?.[0]).toBe("https://106.75.147.147/api/v1/ai-service/llm/chat");
+            expect(post.mock.calls[0]?.[1]).toEqual({
+                project_id: 0,
+                platform_code: "ucloud",
+                model_code: "doubao-1.5-pro",
+                messages: [
+                    { role: "system", content: "你是画布助手" },
+                    { role: "user", content: "你好" },
+                ],
+            });
+            expect(post.mock.calls[0]?.[2]?.headers).toMatchObject({ Authorization: "Bearer access-token", "Content-Type": "application/json" });
+            expect(dreamLlmApiUrl(undefined, true)).toBe("/__dream_api_proxy/api/v1/ai-service/llm/chat");
+            expect(() => dreamLlmApiUrl("http://106.75.147.147/api/v1/ai-service/llm/chat", false)).toThrow();
+        } finally {
+            post.mockRestore();
+        }
+    });
+
+    test("parses Doubao function-call markers and sends tool schemas through extra_params", async () => {
+        const post = spyOn(axios, "post").mockResolvedValue({
+            data: {
+                code: 0,
+                message: "成功",
+                data: { content: '<|FunctionCallBegin|>[{"name":"canvas_get_state","parameters":{}}]<|FunctionCallEnd|>' },
+            },
+        });
+        try {
+            const { requestToolResponse } = await import("@/services/api/image");
+            const { defaultConfig } = await import("@/stores/use-config-store");
+            const config = configuredDreamConfig(defaultConfig, "doubao-1.5-pro");
+            const tools = [{ type: "function" as const, function: { name: "canvas_get_state", description: "读取画布", parameters: { type: "object", properties: {} } } }];
+            const result = await requestToolResponse(config, [{ role: "user", content: "你是谁" }], tools, "required");
+
+            expect(result.content).toBe("");
+            expect(result.toolCalls).toHaveLength(1);
+            expect(result.toolCalls[0]).toMatchObject({ type: "function", function: { name: "canvas_get_state", arguments: "{}" } });
+            expect(post.mock.calls[0]?.[1]).toMatchObject({
+                extra_params: {
+                    tools,
+                    tool_choice: "required",
+                    parallel_tool_calls: false,
+                },
+            });
+        } finally {
+            post.mockRestore();
+        }
+    });
+
+    test("keeps normal text while extracting multiple marker formats", async () => {
+        const { parseDreamLlmContent } = await import("@/services/api/dream-llm");
+        const result = parseDreamLlmContent('准备操作。<|FunctionCallBegin|>{"id":"call-1","function":{"name":"canvas_move_nodes","arguments":"{\\"items\\":[{\\"id\\":\\"n1\\",\\"dx\\":10}]}"}}<|FunctionCallEnd|>请稍候。');
+        expect(result.content).toBe("准备操作。请稍候。");
+        expect(result.toolCalls).toEqual([
+            {
+                id: "call-1",
+                type: "function",
+                function: { name: "canvas_move_nodes", arguments: '{"items":[{"id":"n1","dx":10}]}' },
+            },
+        ]);
+    });
+});
+
 describe("Dream video request", () => {
     test("keeps the create response as a task ID instead of treating it as a URL", async () => {
         const post = spyOn(axios, "post")
@@ -246,7 +328,7 @@ describe("Dream video request", () => {
         }
     });
 
-    test("sends flat multimodal reference IDs with the subject2video action for the 2.0 model", async () => {
+    test("sends flat multimodal reference IDs with the reference2video action for the 2.0 model", async () => {
         const videoUrl = URL.createObjectURL(new Blob([new Uint8Array(1024)], { type: "video/mp4" }));
         const post = spyOn(axios, "post")
             .mockResolvedValueOnce({ data: { id: "image-asset" } })
@@ -268,7 +350,7 @@ describe("Dream video request", () => {
 
             expect(task.id).toBe("subject-task");
             expect(post.mock.calls[4]?.[1]).toMatchObject({
-                action_type: "subject2video",
+                action_type: "reference2video",
                 dream_video_req_key: "doubao-seedance-2-0-260128",
                 image_asset_ids: ["image-asset"],
                 video_ids: ["video-asset"],
@@ -327,7 +409,7 @@ describe("Dream video request", () => {
             expect(post.mock.calls[0]?.[1]).toBeInstanceOf(FormData);
             expect((post.mock.calls[0]?.[1] as FormData).get("usage")).toBe("mixcut");
             expect((post.mock.calls[0]?.[1] as FormData).get("file")).toEqual(expect.objectContaining({ name: "voice.mp3", type: "audio/mpeg" }));
-            expect(post.mock.calls[1]?.[1]).toMatchObject({ action_type: "subject2video", audio_ids: ["audio-asset"] });
+            expect(post.mock.calls[1]?.[1]).toMatchObject({ action_type: "reference2video", audio_ids: ["audio-asset"] });
         } finally {
             post.mockRestore();
         }
@@ -362,7 +444,7 @@ describe("Dream video request", () => {
             expect(finalizeBody.get("usage")).toBe("mixcut");
             expect(post.mock.calls[2]?.[2]?.headers).toEqual({ Authorization: "Bearer access-token" });
             expect(get.mock.calls[0]?.[0]).toBe(`http://example.test/api/v1/upload/upload/status?upload_id=${firstChunk.get("upload_id")}`);
-            expect(post.mock.calls[3]?.[1]).toMatchObject({ action_type: "subject2video", video_ids: ["video-asset"] });
+            expect(post.mock.calls[3]?.[1]).toMatchObject({ action_type: "reference2video", video_ids: ["video-asset"] });
         } finally {
             post.mockRestore();
             get.mockRestore();

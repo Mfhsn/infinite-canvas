@@ -4,13 +4,21 @@ import { getBlobRepository } from "@/services/storage/runtime";
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
-    const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+    const blob = typeof input === "string" ? await downloadBlobForStorage(input) : input;
     const storageKey = `${prefix}:${nanoid()}`;
     const repository = await getBlobRepository();
     await repository.put(storageKey, blob);
     const url = (await repository.resolveUrl(storageKey)) || URL.createObjectURL(blob);
     const meta = blob.type.startsWith("video/") ? await readVideoMeta(url) : blob.type.startsWith("audio/") ? await readAudioMeta(url) : {};
     return { url, storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta };
+}
+
+export async function downloadBlobForStorage(url: string, fallbackMimeType = "") {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Media download failed (${response.status})`);
+    const blob = await response.blob();
+    if (!fallbackMimeType || (blob.type && blob.type !== "application/octet-stream")) return blob;
+    return new Blob([blob], { type: fallbackMimeType });
 }
 
 export async function resolveMediaUrl(storageKey?: string, fallback = "") {

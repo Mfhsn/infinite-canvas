@@ -24,6 +24,8 @@ write_env_var() {
         VITE_AI_CHANNEL_NAME \
         VITE_AI_API_FORMAT \
         VITE_AI_BASE_URL \
+        VITE_AI_LLM_URL \
+        VITE_AI_LLM_PLATFORM_CODE \
         VITE_AI_API_KEY \
         VITE_AI_PLATFORM_ID \
         VITE_AI_MODELS \

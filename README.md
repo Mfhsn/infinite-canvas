@@ -132,9 +132,10 @@ DATA_STORAGE_DRIVER=mysql STORAGE_API_URL=http://127.0.0.1:3001 npm run dev
 
 - 图片：`doubao-seedream-4.5`（默认）、`doubao-seedream-5-0-260128`
 - 视频：`doubao-seedance-1-5-pro-251215`（默认）、`doubao-seedance-2-0-260128`
+- 文本：`doubao-1.5-pro`（默认），调用独立 HTTPS 端点 `/api/v1/ai-service/llm/chat`
 - 音频：`tts-synthesize`（TTS 端点标识）
 
-复制根目录 `.env.example` 为 `.env` 后即可同时供 Docker Compose 和本地 Vite 开发读取；`VITE_AI_BASE_URL` 配置接口前缀，`VITE_AI_API_KEY` 配置固定 Bearer Token，`VITE_AI_PLATFORM_ID` 配置 Dream 请求中的 `platform_id`（当前文档要求使用 `6`）。`VITE_AI_MODELS` 留空时使用上述内置模型；如需接入其他模型，可通过环境变量定义自有渠道及其模型列表，不会扩充内置渠道。
+复制根目录 `.env.example` 为 `.env` 后即可同时供 Docker Compose 和本地 Vite 开发读取；`VITE_AI_BASE_URL` 配置图片、视频和 TTS 接口前缀，`VITE_AI_LLM_URL` 单独配置文本模型的完整 HTTPS 地址，`VITE_AI_LLM_PLATFORM_CODE` 默认为 `ucloud`，`VITE_AI_API_KEY` 配置固定 Bearer Token，`VITE_AI_PLATFORM_ID` 配置 Dream 请求中的 `platform_id`（当前文档要求使用 `6`）。`VITE_AI_MODELS` 留空时使用上述内置模型；如需接入其他模型，可通过环境变量定义自有渠道及其模型列表，不会扩充内置渠道。
 
 图片请求支持提示词、参考图、宽高、生成数量和 `platform_id`。选择分辨率和比例后，前端会将配置转换为明确的 `width`、`height` 数字；4K 的宽高分别为对应 2K 尺寸的 2 倍：
 
@@ -150,11 +151,11 @@ DATA_STORAGE_DRIVER=mysql STORAGE_API_URL=http://127.0.0.1:3001 npm run dev
 | 21:9 | 3024×1296 | 6048×2592 |
 | 9:21 | 1296×3024 | 2592×6048 |
 
-参考图会先以 `multipart/form-data` 上传到 `/api/v1/upload/upload/image`，再把响应中的素材 `id` 放入生成请求的 `image_asset_ids`，不会把浏览器本地 URL 直接作为素材 ID。内置视频生成的提示词必填：`doubao-seedance-1-5-pro-251215` 仅支持首尾帧，必须上传首帧和尾帧各一张，时长为 5 或 10 秒，并支持 Seed；`doubao-seedance-2-0-260128` 支持首尾帧和全能参考，时长为 4-15 秒。全能参考固定使用 `subject2video`，最多接收 9 张图片、3 个视频和 3 个音频；音频直接上传到 `/api/v1/upload/upload/audio`，视频先通过 `/api/v1/upload/upload/chunk` 分片上传，再由 `/api/v1/upload/upload/video` 合并，最终分别传入 `audio_ids` 和 `video_ids`。
+参考图会先以 `multipart/form-data` 上传到 `/api/v1/upload/upload/image`，再把响应中的素材 `id` 放入生成请求的 `image_asset_ids`，不会把浏览器本地 URL 直接作为素材 ID。内置视频生成的提示词必填：`doubao-seedance-1-5-pro-251215` 仅支持首尾帧，必须上传首帧和尾帧各一张，时长为 5 或 10 秒，并支持 Seed；`doubao-seedance-2-0-260128` 支持首尾帧和全能参考，时长为 4-15 秒。全能参考固定使用 `reference2video`，最多接收 9 张图片、3 个视频和 3 个音频；音频直接上传到 `/api/v1/upload/upload/audio`，视频先通过 `/api/v1/upload/upload/chunk` 分片上传，再由 `/api/v1/upload/upload/video` 合并，最终分别传入 `audio_ids` 和 `video_ids`。
 
 当前实现不会调用登录或 Refresh Token 接口。更新 Token 时直接修改 `.env` 中的 `VITE_AI_API_KEY`，然后重启 Docker 容器或本地开发服务器。建议保持 `VITE_AI_CONFIG_OVERRIDE=true`，确保 `.env` 中的 URL、Token、platform_id 和默认模型覆盖浏览器本地保存的旧配置。
 
-如果 API 的 HTTP 地址会跳转到证书不包含该 IP 的 HTTPS 地址，可在 `.env` 设置 `VITE_AI_TLS_SERVER_NAME`。当前内置服务在 TLS ClientHello 携带 SNI 时会重置连接，因此 IP 配置还需设置 `VITE_AI_TLS_DISABLE_SNI=true`；本地 Vite 会通过同源 `/__dream_api_proxy` 连接固定的 `VITE_AI_BASE_URL` 主机，不发送 SNI，但仍使用 `VITE_AI_TLS_SERVER_NAME` 校验证书，代理目标不能由浏览器请求修改。若连接恢复后返回 `401 令牌无效或已过期`，说明网络与 TLS 已正常，应替换 `.env` 中的固定 Token 并重启开发服务器。
+已实测图片、视频、TTS 和 LLM 的 HTTP 地址都会返回 `301` 并跳转到同路径 HTTPS，因此 `VITE_AI_BASE_URL` 和 `VITE_AI_LLM_URL` 必须使用 `https://`。该 IP 返回的证书签发给 `*.just4fun.sg`，且当前内置服务在 TLS ClientHello 携带 SNI 时会重置连接，所以 `.env` 还需保持 `VITE_AI_TLS_SERVER_NAME=prod-cn.just4fun.sg` 和 `VITE_AI_TLS_DISABLE_SNI=true`；本地 Vite 与生产 Storage Server 会通过同源 `/__dream_api_proxy` 连接固定上游，不发送 SNI，但仍按该域名校验证书。若返回 `401 令牌无效或已过期`，说明网络与 TLS 已正常，应替换固定 Token 并重启服务。
 
 图片、视频、局部重绘和智能扩图接口返回 `task_id` 后，前端会先查询 `/api/v1/task/{task_id}/status`：`done=true` 时再读取 `/api/v1/task/{task_id}/results`，`failed=true` 时读取 `/api/v1/task/{task_id}` 的 `error_message`。图片结果兼容 `file_url`、`image_url`、`file_path`、`url`，以及当前任务接口实际用于返回 JPEG 的 `video_url`，仅在没有完整资源字段时使用 `thumbnail_url`；视频读取 `video_url`；TTS 直接读取同步响应中的 `audio_url`。`/storage/...` 等相对地址会自动拼接 `VITE_AI_BASE_URL`，同源媒体下载会继续携带固定 Bearer Token。
 

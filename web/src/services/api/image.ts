@@ -8,6 +8,7 @@ import { AppError, requestError } from "@/lib/app-error";
 import type { I18nKey } from "@/i18n/messages";
 import { imageToDataUrl } from "@/services/image-storage";
 import { fetchDreamModels, requestDreamImageEdit, requestDreamImageGeneration } from "@/services/api/dream";
+import { requestDreamLlmChat } from "@/services/api/dream-llm";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -39,7 +40,7 @@ export type ToolResponseResult = {
     toolCalls: ResponseToolCall[];
 };
 
-type ToolChoice = "auto" | "required" | { type: "function"; name: string };
+export type ToolChoice = "auto" | "required" | { type: "function"; name: string };
 type ResponseMessageContent = AiTextMessage["content"] | string;
 type ResponseInputContent = { type: "input_text"; text: string } | { type: "input_image"; image_url: string };
 type ResponseInputItem = { role: "system" | "user" | "assistant"; content: string | ResponseInputContent[] } | { type: "function_call"; call_id: string; name: string; arguments: string } | { type: "function_call_output"; call_id: string; output: string };
@@ -684,24 +685,28 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
     try {
-        if (requestConfig.apiFormat === "dream") throw new AppError("error.image.dreamTextUnsupported");
+        if (requestConfig.apiFormat === "dream") {
+            const answer = (await requestDreamLlmChat(requestConfig, withSystemMessage(requestConfig, messages), options)).content;
+            if (!answer) throw new AppError("error.model.emptyContent");
+            onDelta(answer);
+            return answer;
+        }
         if (requestConfig.apiFormat === "gemini") {
             const answer = (await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages), onDelta, options)).content;
             if (!answer) throw new AppError("error.model.emptyContent");
             return answer;
         }
-        const answer =
-            (
-                await requestStreamingResponse(
-                    requestConfig,
-                    {
-                        model: requestConfig.model,
-                        input: toResponseInput(withSystemMessage(requestConfig, messages)),
-                    },
-                    onDelta,
-                    options,
-                )
-            ).content;
+        const answer = (
+            await requestStreamingResponse(
+                requestConfig,
+                {
+                    model: requestConfig.model,
+                    input: toResponseInput(withSystemMessage(requestConfig, messages)),
+                },
+                onDelta,
+                options,
+            )
+        ).content;
         if (!answer) throw new AppError("error.model.emptyContent");
         return answer;
     } catch (error) {
@@ -712,7 +717,12 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
 export async function requestToolResponse(config: AiConfig, messages: ResponseInputMessage[], tools: ResponseFunctionTool[], toolChoice: ToolChoice = "auto", onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
     try {
-        if (requestConfig.apiFormat === "dream") throw new AppError("error.image.dreamToolsUnsupported");
+        if (requestConfig.apiFormat === "dream") {
+            const result = await requestDreamLlmChat(requestConfig, withSystemMessage(requestConfig, messages), { ...options, tools, toolChoice });
+            if (!result.content && !result.toolCalls.length) throw new AppError("error.model.emptyContent");
+            if (result.content) onDelta?.(result.content);
+            return result;
+        }
         if (requestConfig.apiFormat === "gemini") {
             return await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages, toGeminiToolOptions(tools, toolChoice)), onDelta, options);
         }

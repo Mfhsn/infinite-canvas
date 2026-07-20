@@ -84,26 +84,29 @@ export type ModelCapability = "image" | "video" | "text" | "audio";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
-const DREAM_BASE_URL = "http://prod-cn.your-api-server.com";
+const DREAM_BASE_URL = "https://prod-cn.your-api-server.com";
 const DREAM_CHANNEL_ID = "dream-default";
 const DREAM_CHANNEL_NAME = "";
 const DREAM_DEFAULT_IMAGE_MODEL = "doubao-seedream-4.5";
 const DREAM_DEFAULT_VIDEO_MODEL = "doubao-seedance-1-5-pro-251215";
+const DREAM_DEFAULT_TEXT_MODEL = "doubao-1.5-pro";
 const DREAM_DEFAULT_AUDIO_MODEL = "tts-synthesize";
 
 export const DREAM_IMAGE_MODELS = ["doubao-seedream-4.5", "doubao-seedream-5-0-260128"] as const;
 
 export const DREAM_VIDEO_MODELS = ["doubao-seedance-1-5-pro-251215", "doubao-seedance-2-0-260128"] as const;
 
+export const DREAM_TEXT_MODELS = [DREAM_DEFAULT_TEXT_MODEL] as const;
+
 // TTS 文档没有模型字段，使用端点标识作为音频模型选项。
 export const DREAM_AUDIO_MODELS = [DREAM_DEFAULT_AUDIO_MODEL] as const;
-export const DREAM_API_MODELS = [...DREAM_IMAGE_MODELS, ...DREAM_VIDEO_MODELS, ...DREAM_AUDIO_MODELS];
+export const DREAM_API_MODELS = [...DREAM_IMAGE_MODELS, ...DREAM_VIDEO_MODELS, ...DREAM_TEXT_MODELS, ...DREAM_AUDIO_MODELS];
 
 const DEFAULT_CHANNELS = resolveDefaultChannels();
 const DEFAULT_MODELS = modelOptionsFromChannels(DEFAULT_CHANNELS);
 const DEFAULT_IMAGE_MODEL = defaultModelValue(ENV_DEFAULT_IMAGE_MODEL, DREAM_DEFAULT_IMAGE_MODEL, "image");
 const DEFAULT_VIDEO_MODEL = defaultModelValue(ENV_DEFAULT_VIDEO_MODEL, DREAM_DEFAULT_VIDEO_MODEL, "video");
-const DEFAULT_TEXT_MODEL = defaultModelValue(ENV_DEFAULT_TEXT_MODEL, "", "text");
+const DEFAULT_TEXT_MODEL = defaultModelValue(ENV_DEFAULT_TEXT_MODEL, DREAM_DEFAULT_TEXT_MODEL, "text");
 const DEFAULT_AUDIO_MODEL = defaultModelValue(ENV_DEFAULT_AUDIO_MODEL, DREAM_DEFAULT_AUDIO_MODEL, "audio");
 
 export const defaultConfig: AiConfig = {

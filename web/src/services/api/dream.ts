@@ -382,9 +382,9 @@ async function dreamVideoRequestBody(config: AiConfig, model: string, prompt: st
     const body: Record<string, unknown> = {
         platform_id: config.platformId,
         project_id: 0,
-        // Seedance 2.0's omni-reference mode uses subject2video while its
+        // Seedance 2.0's omni-reference mode uses reference2video while its
         // uploaded image, video, and audio assets remain flat ID lists.
-        action_type: mode === "subject" ? "subject2video" : "start-end2video",
+        action_type: mode === "subject" ? "reference2video" : "start-end2video",
         dream_video_req_key: model,
         script_text: scriptText,
         aspect_ratio: normalizeDreamVideoRatio(config.size, model),
