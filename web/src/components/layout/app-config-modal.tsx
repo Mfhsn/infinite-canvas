@@ -42,11 +42,10 @@ type WebdavDomainProgress = {
     current?: number;
     total?: number;
     status?: "active" | "success" | "exception";
+    consistency?: "etag" | "weak";
 };
 
-type WebdavSyncStatus =
-    | { stage: AppSyncStage | "ready"; bytes?: number; detail?: string }
-    | { stage: "error"; detail: string };
+type WebdavSyncStatus = { stage: AppSyncStage | "ready"; bytes?: number; detail?: string } | { stage: "error"; detail: string };
 
 const modelGroups: ModelGroup[] = [
     { capability: "image", modelKey: "imageModel", modelsKey: "imageModels", defaultLabelKey: "config.group.imageDefault", optionsLabelKey: "config.group.imageOptions" },
@@ -57,9 +56,10 @@ const modelGroups: ModelGroup[] = [
 
 type Translate = ReturnType<typeof useI18n>["t"];
 
-const webdavDomainKeys: AppSyncDomainKey[] = ["canvas", "assets", "image-workbench", "video-workbench"];
+const webdavDomainKeys: AppSyncDomainKey[] = ["canvas", "canvas-folders", "assets", "image-workbench", "video-workbench"];
 const webdavDomainLabelKeys: Record<AppSyncDomainKey, I18nKey> = {
     canvas: "config.webdav.domain.canvas",
+    "canvas-folders": "config.webdav.domain.canvasFolders",
     assets: "config.webdav.domain.assets",
     "image-workbench": "config.webdav.domain.imageWorkbench",
     "video-workbench": "config.webdav.domain.videoWorkbench",
@@ -68,12 +68,16 @@ const webdavDomainLabelKeys: Record<AppSyncDomainKey, I18nKey> = {
 const webdavStageLabelKeys: Record<AppSyncStage, I18nKey> = {
     "waiting-local": "config.webdav.stage.waitingLocal",
     complete: "config.webdav.stage.complete",
+    partial: "config.webdav.stage.partial",
     "read-remote": "config.webdav.stage.readRemote",
     "read-local": "config.webdav.stage.readLocal",
     "download-missing": "config.webdav.stage.downloadMissing",
     "apply-merged": "config.webdav.stage.applyMerged",
     "upload-new": "config.webdav.stage.uploadNew",
     "upload-manifest": "config.webdav.stage.uploadManifest",
+    "conflict-retry": "config.webdav.stage.conflictRetry",
+    "verify-write": "config.webdav.stage.verifyWrite",
+    "weak-consistency": "config.webdav.stage.weakConsistency",
     done: "config.webdav.stage.done",
     failed: "config.webdav.stage.failed",
     "scan-missing": "config.webdav.stage.scanMissing",
@@ -103,6 +107,7 @@ export function AppConfigModal() {
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState<WebdavSyncStatus | null>(null);
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
+    const [failedWebdavDomains, setFailedWebdavDomains] = useState<AppSyncDomainKey[]>([]);
     const config = useConfigStore((state) => state.config);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -227,22 +232,32 @@ export function AppConfigModal() {
                 current: event.current,
                 total: event.total,
                 status: event.status,
+                consistency: event.consistency ?? current[event.domain as AppSyncDomainKey].consistency,
             },
         }));
     };
 
-    const syncWebdav = async () => {
+    const syncWebdav = async (domains: AppSyncDomainKey[] = webdavDomainKeys) => {
         if (!webdavReady) {
             message.error(t("config.webdav.required"));
             return;
         }
         setSyncingWebdav(true);
-        setWebdavDomainProgress(createWebdavDomainProgress());
+        if (domains.length === webdavDomainKeys.length) {
+            setWebdavDomainProgress(createWebdavDomainProgress());
+        } else {
+            setWebdavDomainProgress((current) => ({ ...current, ...Object.fromEntries(domains.map((domain) => [domain, { stage: "waiting" }])) }));
+        }
         setWebdavSyncStatus({ stage: "ready" });
         try {
-            const result = await syncAppDataToWebdav(webdav, updateWebdavProgress);
-            updateWebdavConfig("lastSyncedAt", result.syncedAt);
-            message.success(t("config.webdav.done", { projects: result.projects, assets: result.assets, logs: result.imageLogs + result.videoLogs, files: result.uploadedFiles, bytes: formatBytes(result.uploadedBytes) }));
+            const result = await syncAppDataToWebdav(webdav, updateWebdavProgress, domains);
+            setFailedWebdavDomains((current) => Array.from(new Set([...current.filter((domain) => !domains.includes(domain)), ...result.failedDomains])));
+            if (result.completedDomains.length) updateWebdavConfig("lastSyncedAt", result.syncedAt);
+            if (result.failedDomains.length) {
+                message.warning(t("config.webdav.partial", { succeeded: result.completedDomains.length, failed: result.failedDomains.length }));
+            } else {
+                message.success(t("config.webdav.done", { projects: result.projects, folders: result.folders, assets: result.assets, logs: result.imageLogs + result.videoLogs, files: result.uploadedFiles, bytes: formatBytes(result.uploadedBytes) }));
+            }
         } catch (error) {
             const detail = localizeError(error, t, "config.webdav.failed");
             setWebdavSyncStatus({ stage: "error", detail });
@@ -251,6 +266,8 @@ export function AppConfigModal() {
             setSyncingWebdav(false);
         }
     };
+
+    const retryWebdavDomain = (domain: AppSyncDomainKey) => void syncWebdav([domain]);
 
     return (
         <Modal
@@ -462,7 +479,7 @@ export function AppConfigModal() {
                                         </Button>
                                         {webdavSyncStatus ? <span className="text-xs text-stone-500">{formatWebdavSyncStatus(webdavSyncStatus, t)}</span> : null}
                                     </div>
-                                    {syncingWebdav || webdavSyncStatus ? <WebdavProgressGrid progress={webdavDomainProgress} t={t} /> : null}
+                                    {syncingWebdav || webdavSyncStatus ? <WebdavProgressGrid progress={webdavDomainProgress} failedDomains={failedWebdavDomains} syncing={syncingWebdav} onRetry={retryWebdavDomain} t={t} /> : null}
                                 </section>
                             </Form>
                         ),
@@ -526,7 +543,7 @@ function formatWebdavTime(value: string, language = "zh-CN") {
     return new Date(value).toLocaleString(language, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-function WebdavProgressGrid({ progress, t }: { progress: Record<AppSyncDomainKey, WebdavDomainProgress>; t: Translate }) {
+function WebdavProgressGrid({ progress, failedDomains, syncing, onRetry, t }: { progress: Record<AppSyncDomainKey, WebdavDomainProgress>; failedDomains: AppSyncDomainKey[]; syncing: boolean; onRetry: (domain: AppSyncDomainKey) => void; t: Translate }) {
     return (
         <div className="mt-3 grid gap-2">
             {webdavDomainKeys.map((key) => {
@@ -536,10 +553,18 @@ function WebdavProgressGrid({ progress, t }: { progress: Record<AppSyncDomainKey
                     <div key={key} className="rounded-md border border-stone-200 px-3 py-2 dark:border-stone-800">
                         <div className="mb-1 flex min-w-0 items-center justify-between gap-3 text-xs">
                             <span className="shrink-0 font-medium text-stone-700 dark:text-stone-200">{t(webdavDomainLabelKeys[key])}</span>
-                            <span className="min-w-0 truncate text-right text-stone-500">
-                                {formatWebdavProgressStage(item, t)}
-                                {count ? ` · ${count}` : ""}
-                            </span>
+                            <div className="flex min-w-0 items-center justify-end gap-2">
+                                <span className="min-w-0 truncate text-right text-stone-500">
+                                    {formatWebdavProgressStage(item, t)}
+                                    {item.consistency === "weak" ? ` · ${t("config.webdav.weakGuarantee")}` : ""}
+                                    {count ? ` · ${count}` : ""}
+                                </span>
+                                {failedDomains.includes(key) ? (
+                                    <Button size="small" disabled={syncing} onClick={() => onRetry(key)}>
+                                        {t("config.webdav.retryDomain")}
+                                    </Button>
+                                ) : null}
+                            </div>
                         </div>
                         <Progress percent={getWebdavProgressPercent(item)} size="small" status={getWebdavProgressStatus(item)} showInfo={false} />
                     </div>
@@ -561,6 +586,7 @@ function getWebdavProgressPercent(item: WebdavDomainProgress) {
     if (item.stage === "upload-new") return 66;
     if (item.stage === "media-complete" || item.stage === "no-upload") return 74;
     if (item.stage === "upload-manifest") return 90;
+    if (item.stage === "conflict-retry" || item.stage === "verify-write" || item.stage === "weak-consistency") return 94;
     return item.status === "active" ? 30 : 0;
 }
 

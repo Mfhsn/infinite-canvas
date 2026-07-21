@@ -4,6 +4,7 @@ import type { BlobRepository, DocumentBatch, DocumentRepository, StorageBlobMeta
 
 const documentStores: Record<StorageDomain, LocalForage> = {
     canvas: localforage.createInstance({ name: "infinite-canvas", storeName: "app_state" }),
+    canvas_folders: localforage.createInstance({ name: "infinite-canvas", storeName: "canvas_folders" }),
     assets: localforage.createInstance({ name: "infinite-canvas", storeName: "app_state" }),
     image_generation_logs: localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" }),
     video_generation_logs: localforage.createInstance({ name: "infinite-canvas", storeName: "video_generation_logs" }),
@@ -14,6 +15,7 @@ const mediaBlobStore = localforage.createInstance({ name: "infinite-canvas", sto
 const objectUrls = new Map<string, string>();
 const stateKeys: Partial<Record<StorageDomain, string>> = {
     canvas: "infinite-canvas:canvas_store",
+    canvas_folders: "infinite-canvas:canvas_folder_store",
     assets: "infinite-canvas:asset_store",
 };
 

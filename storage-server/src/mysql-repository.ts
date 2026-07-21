@@ -58,6 +58,7 @@ export async function createMysqlPool(config: ServerConfig): Promise<Pool> {
     user: config.mysql.user,
     password: config.mysql.password,
     connectionLimit: config.mysql.connectionLimit,
+    connectTimeout: 10_000,
     charset: 'utf8mb4',
     ssl: config.mysql.ssl ? {} : undefined,
     namedPlaceholders: false,

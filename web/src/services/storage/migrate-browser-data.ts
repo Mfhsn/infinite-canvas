@@ -4,7 +4,7 @@ import { getStorageRuntimeConfig } from "@/services/storage/runtime";
 import type { StorageDomain } from "@/services/storage/types";
 import { COLLECTION_ORDER_KEY, parsePersistedCollection } from "@/services/storage/persisted-collection";
 
-const domains: StorageDomain[] = ["canvas", "assets", "image_generation_logs", "video_generation_logs"];
+const domains: StorageDomain[] = ["canvas", "canvas_folders", "assets", "image_generation_logs", "video_generation_logs"];
 
 export type BrowserDataMigrationResult = {
     documents: number;
@@ -68,13 +68,13 @@ export async function migrateBrowserDataToMysql(onProgress?: (completed: number,
 
 async function browserDocumentsForMigration(domain: StorageDomain) {
     const documents = await browserDocumentRepository.list(domain);
-    if (!documents.length && (domain === "canvas" || domain === "assets") && typeof window !== "undefined") {
-        const key = domain === "canvas" ? "infinite-canvas:canvas_store" : "infinite-canvas:asset_store";
+    if (!documents.length && (domain === "canvas" || domain === "canvas_folders" || domain === "assets") && typeof window !== "undefined") {
+        const key = domain === "canvas" ? "infinite-canvas:canvas_store" : domain === "canvas_folders" ? "infinite-canvas:canvas_folder_store" : "infinite-canvas:asset_store";
         const payload = window.localStorage.getItem(key);
         if (payload) documents.push({ key, payload, revision: 0, createdAt: "", updatedAt: "" });
     }
-    if (domain !== "canvas" && domain !== "assets") return { documents, failures: [] };
-    const field = domain === "canvas" ? "projects" : "assets";
+    if (domain !== "canvas" && domain !== "canvas_folders" && domain !== "assets") return { documents, failures: [] };
+    const field = domain === "canvas" ? "projects" : domain === "canvas_folders" ? "folders" : "assets";
     const migrated: typeof documents = [];
     const failures: Array<{ key: string; message: string }> = [];
     for (const document of documents) {

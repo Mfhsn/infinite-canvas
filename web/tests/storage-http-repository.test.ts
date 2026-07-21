@@ -58,4 +58,14 @@ describe("HTTP storage repositories", () => {
     test("rejects document keys the server cannot route", async () => {
         await expect(new HttpDocumentRepository().get("canvas", "project/1")).rejects.toThrow("cannot contain slashes");
     });
+
+    test("passes an abort signal to every storage request", async () => {
+        let signal: AbortSignal | null | undefined;
+        globalThis.fetch = (async (_input, init) => {
+            signal = init?.signal;
+            return Response.json({ documents: [] });
+        }) as typeof fetch;
+        await new HttpDocumentRepository().list("canvas_folders");
+        expect(signal).toBeInstanceOf(AbortSignal);
+    });
 });

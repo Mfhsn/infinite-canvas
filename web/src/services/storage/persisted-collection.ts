@@ -1,4 +1,4 @@
-export type PersistedCollectionField = "projects" | "assets";
+export type PersistedCollectionField = "projects" | "assets" | "folders";
 export const COLLECTION_ORDER_KEY = "__collection_order__";
 import type { StorageDocument } from "@/services/storage/types";
 
@@ -18,6 +18,10 @@ export function parsePersistedCollection(value: string, field: PersistedCollecti
 
 export function serializePersistedCollection(items: Array<Record<string, unknown>>, field: PersistedCollectionField) {
     return JSON.stringify({ state: { [field]: items }, version: 0 });
+}
+
+export function collectionUsesOrder(field: PersistedCollectionField) {
+    return field !== "folders";
 }
 
 export function orderCollectionDocuments<T extends { key: string; payload: Record<string, unknown> }>(documents: T[], orderPayload: unknown) {

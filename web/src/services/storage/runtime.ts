@@ -4,9 +4,14 @@ import { notifyStorageError } from "@/services/storage/types";
 import type { BlobRepository, DocumentRepository, StorageRuntimeConfig } from "@/services/storage/types";
 
 let runtimeConfigPromise: Promise<StorageRuntimeConfig> | undefined;
+const STORAGE_CONFIG_TIMEOUT_MS = 10_000;
 
 export function getStorageRuntimeConfig() {
-    if (!runtimeConfigPromise) runtimeConfigPromise = loadStorageRuntimeConfig();
+    if (!runtimeConfigPromise)
+        runtimeConfigPromise = loadStorageRuntimeConfig().catch((error) => {
+            runtimeConfigPromise = undefined;
+            throw error;
+        });
     return runtimeConfigPromise;
 }
 
@@ -21,11 +26,16 @@ export async function getBlobRepository(): Promise<BlobRepository> {
 async function loadStorageRuntimeConfig(): Promise<StorageRuntimeConfig> {
     if (typeof window === "undefined") return { driver: "browser", namespace: "default" };
     let response: Response;
+    const controller = new AbortController();
+    const timer = globalThis.setTimeout(() => controller.abort(), STORAGE_CONFIG_TIMEOUT_MS);
     try {
-        response = await fetch("/api/storage/config", { headers: { Accept: "application/json" } });
+        response = await fetch("/api/storage/config", { headers: { Accept: "application/json" }, signal: controller.signal });
     } catch (error) {
-        notifyStorageError(error);
-        throw error;
+        const resolved = error instanceof Error && error.name === "AbortError" ? new Error("Storage configuration request timed out. Check the application service and reverse proxy.") : error;
+        notifyStorageError(resolved);
+        throw resolved;
+    } finally {
+        globalThis.clearTimeout(timer);
     }
     if (response.headers.get("content-type")?.includes("text/html")) {
         // Static-only hosts rewrite unknown routes to index.html and can only use browser storage.

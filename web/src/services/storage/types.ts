@@ -1,7 +1,7 @@
 export type StorageDriver = "browser" | "mysql";
 export const STORAGE_ERROR_EVENT = "infinite-canvas:storage-error";
 
-export type StorageDomain = "canvas" | "assets" | "image_generation_logs" | "video_generation_logs";
+export type StorageDomain = "canvas" | "canvas_folders" | "assets" | "image_generation_logs" | "video_generation_logs";
 
 export type StorageRuntimeConfig = {
     driver: StorageDriver;

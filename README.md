@@ -112,17 +112,14 @@ docker compose up -d
 
 当前 MySQL 模式按单用户自托管设计，`STORAGE_NAMESPACE` 用于部署级数据隔离，但 Storage API 本身不提供账号登录。不要在没有额外认证和访问控制的情况下把它作为多人公网服务。
 
-本地开发 MySQL 模式需要先启动 `storage-server`，再启动 Vite：
+本地开发在 `DATA_STORAGE_DRIVER=mysql` 且 `STORAGE_API_URL` 指向本机时，`bun run dev` 会自动启动 `storage-server`：
 
 ```bash
-cd storage-server
-npm install
-DATA_STORAGE_DRIVER=mysql MYSQL_HOST=127.0.0.1 npm start
-
-# 另一个终端
 cd web
-DATA_STORAGE_DRIVER=mysql STORAGE_API_URL=http://127.0.0.1:3001 npm run dev
+bun run dev
 ```
+
+首次运行前仍需在 `storage-server` 执行一次 `npm install`。如果 `STORAGE_API_URL` 指向独立远端服务，开发脚本不会在本机重复启动 Storage Server。
 
 存储驱动只在启动时读取，修改 `.env` 后必须重启服务。
 

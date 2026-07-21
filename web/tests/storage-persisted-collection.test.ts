@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { CollectionRevisionTracker, orderCollectionDocuments, parsePersistedCollection, serializePersistedCollection } from "@/services/storage/persisted-collection";
+import { CollectionRevisionTracker, collectionUsesOrder, orderCollectionDocuments, parsePersistedCollection, serializePersistedCollection } from "@/services/storage/persisted-collection";
 
 describe("MySQL collection document mapping", () => {
     test("reconstructs Zustand canvas state from individual MySQL documents", () => {
@@ -16,6 +16,13 @@ describe("MySQL collection document mapping", () => {
         const serialized = serializePersistedCollection(assets, "assets");
         expect(parsePersistedCollection(serialized, "assets")).toEqual(assets);
         expect(parsePersistedCollection(serialized, "projects")).toEqual([]);
+    });
+
+    test("supports the independent folder envelope without collection order", () => {
+        const folders = [{ id: "folder-1", name: "Folder", parentId: null }];
+        expect(parsePersistedCollection(serializePersistedCollection(folders, "folders"), "folders")).toEqual(folders);
+        expect(collectionUsesOrder("folders")).toBeFalse();
+        expect(collectionUsesOrder("projects")).toBeTrue();
     });
 
     test("rejects records without stable ids", () => {

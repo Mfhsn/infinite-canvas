@@ -120,6 +120,22 @@ test('document batch API rolls back every mutation on a revision conflict', asyn
   });
 });
 
+test('canvas_folders is an independent document domain', async () => {
+  await withServer(baseConfig(), createMemoryRepositories(), async (base) => {
+    let response = await fetch(`${base}/api/storage/documents/canvas_folders/folder-1`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ payload: { id: 'folder-1', name: 'Folder', parentId: null } }),
+    });
+    assert.equal(response.status, 200);
+
+    response = await fetch(`${base}/api/storage/documents/canvas_folders`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.documents.map((document) => document.key), ['folder-1']);
+  });
+});
+
 test('blob API supports raw upload, HEAD, range, list and size limit', async () => {
   const repos = createMemoryRepositories();
   const contentReads = [];

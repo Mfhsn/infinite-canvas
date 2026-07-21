@@ -2,6 +2,7 @@ import type { BlobRepository, DocumentBatch, DocumentBatchResult, DocumentReposi
 import { notifyStorageError, StorageRequestError } from "@/services/storage/types";
 
 const STORAGE_API_BASE = "/api/storage";
+const STORAGE_REQUEST_TIMEOUT_MS = 15_000;
 
 type ErrorBody = { error?: { code?: string; message?: string } };
 
@@ -12,11 +13,16 @@ async function request(input: string, init?: RequestInit) {
 }
 
 async function storageFetch(input: RequestInfo | URL, init?: RequestInit) {
+    const controller = new AbortController();
+    const timer = globalThis.setTimeout(() => controller.abort(), STORAGE_REQUEST_TIMEOUT_MS);
     try {
-        return await fetch(input, init);
+        return await fetch(input, { ...init, signal: controller.signal });
     } catch (error) {
-        notifyStorageError(error);
-        throw error;
+        const resolved = error instanceof Error && error.name === "AbortError" ? new Error("Storage request timed out. Check the storage service and reverse proxy.") : error;
+        notifyStorageError(resolved);
+        throw resolved;
+    } finally {
+        globalThis.clearTimeout(timer);
     }
 }
 

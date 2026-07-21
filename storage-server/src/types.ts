@@ -1,5 +1,6 @@
 export const allowedDomains = [
   'canvas',
+  'canvas_folders',
   'assets',
   'image_generation_logs',
   'video_generation_logs',
