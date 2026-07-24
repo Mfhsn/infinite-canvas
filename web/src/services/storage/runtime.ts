@@ -1,7 +1,9 @@
 import { browserBlobRepository, browserDocumentRepository } from "@/services/storage/browser-repository";
-import { httpBlobRepository, httpDocumentRepository } from "@/services/storage/http-repository";
+import { httpBlobRepository, httpDocumentRepository, resetHttpStorageRepositories } from "@/services/storage/http-repository";
+import { withPlatformSessionBinding } from "@/services/platform-session";
 import { notifyStorageError } from "@/services/storage/types";
 import type { BlobRepository, DocumentRepository, StorageRuntimeConfig } from "@/services/storage/types";
+import { appPath } from "@/lib/app-base-path";
 
 let runtimeConfigPromise: Promise<StorageRuntimeConfig> | undefined;
 const STORAGE_CONFIG_TIMEOUT_MS = 10_000;
@@ -29,7 +31,7 @@ async function loadStorageRuntimeConfig(): Promise<StorageRuntimeConfig> {
     const controller = new AbortController();
     const timer = globalThis.setTimeout(() => controller.abort(), STORAGE_CONFIG_TIMEOUT_MS);
     try {
-        response = await fetch("/api/storage/config", { headers: { Accept: "application/json" }, signal: controller.signal });
+        response = await fetch(appPath("/api/storage/config"), { credentials: "include", headers: withPlatformSessionBinding({ Accept: "application/json" }), signal: controller.signal });
     } catch (error) {
         const resolved = error instanceof Error && error.name === "AbortError" ? new Error("Storage configuration request timed out. Check the application service and reverse proxy.") : error;
         notifyStorageError(resolved);
@@ -53,6 +55,9 @@ function failStorageConfig(message: string): never {
     throw error;
 }
 
-export function resetStorageRuntimeForTests() {
+export function resetStorageRuntime() {
     runtimeConfigPromise = undefined;
+    resetHttpStorageRepositories();
 }
+
+export const resetStorageRuntimeForTests = resetStorageRuntime;

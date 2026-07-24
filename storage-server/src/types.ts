@@ -16,14 +16,31 @@ export interface DreamProxyConfig {
   timeoutMs: number;
 }
 
+export interface IntegrationConfig {
+  enabled: boolean;
+  baseUrl: string;
+  tlsServerName: string;
+  disableSni: boolean;
+  externalProjectId: string;
+  sourceSystem: string;
+  sessionSecret: string;
+  cookieName: string;
+  cookieSecure: boolean;
+  sessionTtlSeconds: number;
+  connectTimeoutMs: number;
+  requestTimeoutMs: number;
+}
+
 export interface ServerConfig {
   driver: StorageDriver;
   namespace: string;
   port: number;
   staticDir: string;
+  appBasePath: string;
   maxFileBytes: number;
   maxDocumentBytes: number;
   dreamProxy?: DreamProxyConfig;
+  integration: IntegrationConfig;
   mysql: {
     host: string;
     port: number;
@@ -35,6 +52,53 @@ export interface ServerConfig {
     connectRetryMs: number;
     ssl: boolean;
   };
+}
+
+export interface PlatformContext {
+  authenticated: true;
+  uid: string;
+  username: string;
+  nickname: string;
+  permissionIds: number[];
+  currentPoints: number | null;
+  localProjectId: number;
+  externalProjectId: string | null;
+  sourceSystem: string;
+  expiresAt: string;
+}
+
+export interface PlatformProject {
+  projectId: string;
+  name: string;
+  points: number | null;
+  permissionIds: number[];
+}
+
+export interface PlatformProjectCreateInput {
+  name: string;
+  content: string | null;
+  tag: string;
+  skill: number[];
+  skillModel: string[];
+}
+
+export interface IntegrationSessionRecord {
+  sessionIdHash: string;
+  context: PlatformContext;
+  externalTokenCiphertext: string | null;
+  refreshTokenCiphertext: string | null;
+  localTokenCiphertext: string;
+  sessionExpiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationSessionRepository {
+  get(sessionIdHash: string): Promise<IntegrationSessionRecord | null>;
+  save(record: IntegrationSessionRecord): Promise<void>;
+  updateExisting(record: IntegrationSessionRecord): Promise<boolean>;
+  replace(sessionIdHash: string, replacement: IntegrationSessionRecord): Promise<boolean>;
+  delete(sessionIdHash: string): Promise<void>;
 }
 
 export interface DocumentRecord {

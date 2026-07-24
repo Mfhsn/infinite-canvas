@@ -14,7 +14,8 @@ services:
     image: infinite-canvas-mfh:cn
     container_name: infinite-canvas-mfh
     ports:
-      - "0.0.0.0:3000:3000"
+      # 默认只允许宿主机 Nginx 访问；./docker/compose-cn.sh 会根据 CANVAS_PUBLIC_ACCESS 设置该值。
+      - "${CANVAS_BIND_HOST:-127.0.0.1}:3000:3000"
     env_file:
       - .env
     environment:
@@ -34,6 +35,9 @@ services:
         source: /mnt/infinite-canvas-mfh/storage-server/migrations
         target: /app/storage-server/migrations
         read_only: true
+    networks:
+      - default
+      - ai-manga
     restart: unless-stopped
     logging:
       driver: local
@@ -122,6 +126,11 @@ volumes:
   storage-builder-node-modules:
   bun-build-cache:
   npm-build-cache:
+
+networks:
+  ai-manga:
+    external: true
+    name: ${AI_MANGA_DOCKER_NETWORK:-ai-manga_default}
 
 secrets:
   app_env:

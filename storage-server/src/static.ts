@@ -20,14 +20,17 @@ const mimeTypes: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
-export async function serveStatic(req: IncomingMessage, res: ServerResponse, staticDir: string): Promise<void> {
+export async function serveStatic(req: IncomingMessage, res: ServerResponse, staticDir: string, configuredBasePath = '/'): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (url.pathname.startsWith('/api/')) throw new HttpError(404, 'not_found', 'API route not found');
   if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
 
   const root = path.resolve(staticDir);
   const decoded = decodeURIComponent(url.pathname);
-  const relative = decoded === '/' ? 'index.html' : decoded.replace(/^\/+/, '');
+  const basePath = normalizeBasePath(configuredBasePath);
+  const relativePath = stripBasePath(decoded, basePath, url.search, res);
+  if (relativePath === null) return;
+  const relative = relativePath === '' ? 'index.html' : relativePath.replace(/^\/+/, '');
   const requested = safeResolve(root, relative);
   const filePath = await resolveFile(requested, root);
   const data = await fs.readFile(filePath);
@@ -37,6 +40,23 @@ export async function serveStatic(req: IncomingMessage, res: ServerResponse, sta
     'x-content-type-options': 'nosniff',
   });
   res.end(req.method === 'HEAD' ? undefined : data);
+}
+
+function normalizeBasePath(value: string): string {
+  const segments = (value || '/').split('/').filter(Boolean);
+  return segments.length ? `/${segments.join('/')}/` : '/';
+}
+
+function stripBasePath(pathname: string, basePath: string, search: string, res: ServerResponse): string | null {
+  if (basePath === '/') return pathname === '/' ? '' : pathname;
+  const withoutTrailingSlash = basePath.slice(0, -1);
+  if (pathname === '/' || pathname === withoutTrailingSlash) {
+    res.writeHead(308, { location: `${basePath}${search}`, 'cache-control': 'no-store' });
+    res.end();
+    return null;
+  }
+  if (!pathname.startsWith(basePath)) throw new HttpError(404, 'not_found', 'Static route is outside the configured application base path');
+  return pathname.slice(basePath.length);
 }
 
 function safeResolve(root: string, relative: string): string {

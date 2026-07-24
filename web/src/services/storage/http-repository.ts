@@ -1,7 +1,9 @@
 import type { BlobRepository, DocumentBatch, DocumentBatchResult, DocumentRepository, StorageBlobMetadata, StorageDocument, StorageDomain } from "@/services/storage/types";
 import { notifyStorageError, StorageRequestError } from "@/services/storage/types";
+import { appendPlatformSessionBinding, withPlatformSessionBinding } from "@/services/platform-session";
+import { appPath } from "@/lib/app-base-path";
 
-const STORAGE_API_BASE = "/api/storage";
+const STORAGE_API_BASE = appPath("/api/storage");
 const STORAGE_REQUEST_TIMEOUT_MS = 15_000;
 
 type ErrorBody = { error?: { code?: string; message?: string } };
@@ -16,7 +18,12 @@ async function storageFetch(input: RequestInfo | URL, init?: RequestInit) {
     const controller = new AbortController();
     const timer = globalThis.setTimeout(() => controller.abort(), STORAGE_REQUEST_TIMEOUT_MS);
     try {
-        return await fetch(input, { ...init, signal: controller.signal });
+        return await fetch(input, {
+            ...init,
+            credentials: "include",
+            headers: withPlatformSessionBinding(init?.headers),
+            signal: controller.signal,
+        });
     } catch (error) {
         const resolved = error instanceof Error && error.name === "AbortError" ? new Error("Storage request timed out. Check the storage service and reverse proxy.") : error;
         notifyStorageError(resolved);
@@ -112,6 +119,10 @@ export class HttpDocumentRepository implements DocumentRepository {
         return result;
     }
 
+    reset() {
+        this.revisions.clear();
+    }
+
     private remember<T>(domain: StorageDomain, document: StorageDocument<T>) {
         this.revisions.set(this.revisionKey(domain, document.key), document.revision);
     }
@@ -158,12 +169,16 @@ export class HttpBlobRepository implements BlobRepository {
     }
 
     async resolveUrl(storageKey: string) {
-        return (await this.has(storageKey)) ? `${STORAGE_API_BASE}${blobPath(storageKey)}` : null;
+        return (await this.has(storageKey)) ? appendPlatformSessionBinding(`${STORAGE_API_BASE}${blobPath(storageKey)}`) : null;
     }
 }
 
 export const httpDocumentRepository = new HttpDocumentRepository();
 export const httpBlobRepository = new HttpBlobRepository();
+
+export function resetHttpStorageRepositories() {
+    httpDocumentRepository.reset();
+}
 
 type ServerBlobMetadata = Omit<StorageBlobMetadata, "storageKey"> & { key: string };
 

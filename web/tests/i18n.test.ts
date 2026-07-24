@@ -16,6 +16,10 @@ describe("application localization", () => {
     test("translates the same key and interpolates parameters in both locales", () => {
         expect(translate("zh-CN", "home.projectStats", { nodes: 3, connections: 2 })).toBe("3 个节点 · 2 条连接");
         expect(translate("en-US", "home.projectStats", { nodes: 3, connections: 2 })).toBe("3 nodes · 2 connections");
+        expect(translate("zh-CN", "user.points", { points: 42 })).toBe("积分 42");
+        expect(translate("en-US", "auth.login")).toBe("Sign in");
+        expect(translate("zh-CN", "platformProject.id", { id: "project-1" })).toBe("项目 ID：project-1");
+        expect(translate("en-US", "auth.registerSuccess")).toContain("Registration succeeded");
     });
 
     test("switches the persisted application language without mutating unrelated state", () => {

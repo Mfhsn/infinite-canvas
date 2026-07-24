@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 import type { I18nTranslator } from "@/i18n/messages";
+import { hasPlatformSessionBinding } from "@/services/platform-session";
 
 import {
     ENV_AI_CHANNELS,
@@ -269,7 +270,8 @@ function modelListKey(capability: ModelCapability) {
 
 function isAiConfigReady(config: AiConfig, model: string) {
     const channel = resolveModelChannel(config, model);
-    return Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim());
+    const hasAuthentication = channel.apiFormat === "dream" && hasPlatformSessionBinding() ? true : Boolean(channel.apiKey.trim());
+    return Boolean(model.trim() && channel.baseUrl.trim() && hasAuthentication);
 }
 
 export const useConfigStore = create<ConfigStore>()(
@@ -371,6 +373,16 @@ export const useConfigStore = create<ConfigStore>()(
         },
     ),
 );
+
+export function clearPersistedAiCredentials() {
+    useConfigStore.setState((state) => ({
+        config: {
+            ...state.config,
+            apiKey: "",
+            channels: state.config.channels.map((channel) => ({ ...channel, apiKey: "" })),
+        },
+    }));
+}
 
 function normalizeModelList(models: string[], channels: ModelChannel[]) {
     const allModelOptions = channels.flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model)));

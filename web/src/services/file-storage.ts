@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import { getBlobRepository } from "@/services/storage/runtime";
+import { withPlatformSessionBinding } from "@/services/platform-session";
 
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
@@ -14,11 +15,30 @@ export async function uploadMediaFile(input: string | Blob, prefix = "file"): Pr
 }
 
 export async function downloadBlobForStorage(url: string, fallbackMimeType = "") {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Media download failed (${response.status})`);
+    const sameOrigin = isSameOriginUrl(url);
+    const response = await fetch(url, {
+        credentials: sameOrigin ? "include" : "omit",
+        ...(sameOrigin ? { headers: withPlatformSessionBinding() } : {}),
+    });
+    if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        const suffix = detail.trim() ? `: ${detail.trim().slice(0, 240)}` : "";
+        throw new Error(`Media download failed (${response.status})${suffix}`);
+    }
     const blob = await response.blob();
     if (!fallbackMimeType || (blob.type && blob.type !== "application/octet-stream")) return blob;
     return new Blob([blob], { type: fallbackMimeType });
+}
+
+function isSameOriginUrl(value: string) {
+    if (value.startsWith("/")) return true;
+    if (/^(?:data|blob):/i.test(value) || typeof window === "undefined") return false;
+    try {
+        const location = window.location;
+        return Boolean(location?.origin && new URL(value, location.href).origin === location.origin);
+    } catch {
+        return false;
+    }
 }
 
 export async function resolveMediaUrl(storageKey?: string, fallback = "") {

@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { HttpBlobRepository, HttpDocumentRepository } from "@/services/storage/http-repository";
+import { CANVAS_SESSION_BINDING_HEADER, capturePlatformSessionBinding, clearPlatformSessionBinding } from "@/services/platform-session";
 
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
     globalThis.fetch = originalFetch;
+    clearPlatformSessionBinding();
 });
 
 describe("HTTP storage repositories", () => {
@@ -28,13 +30,43 @@ describe("HTTP storage repositories", () => {
 
         expect(calls[0].url).toBe("/api/storage/documents/canvas/project%3A1");
         expect(JSON.parse(String(calls[1].init?.body))).toEqual({ payload: { title: "two" }, revision: 3 });
-        expect(calls[2].init?.headers).toEqual({ "If-Match": "4" });
+        expect(new Headers(calls[2].init?.headers).get("If-Match")).toBe("4");
     });
 
     test("uses HEAD before resolving a stable media URL", async () => {
         globalThis.fetch = (async () => new Response(null, { status: 200 })) as typeof fetch;
         const repository = new HttpBlobRepository();
         expect(await repository.resolveUrl("video:demo")).toBe("/api/storage/blobs/video%3Ademo");
+    });
+
+    test("sends binding on fetches and appends it to stable blob URLs", async () => {
+        capturePlatformSessionBinding(new Response(null, { headers: { [CANVAS_SESSION_BINDING_HEADER]: "session/value+1" } }));
+        let request: RequestInit | undefined;
+        globalThis.fetch = (async (_input, init) => {
+            request = init;
+            return new Response(null, { status: 200 });
+        }) as typeof fetch;
+
+        const url = await new HttpBlobRepository().resolveUrl("video:demo");
+
+        expect(new Headers(request?.headers).get(CANVAS_SESSION_BINDING_HEADER)).toBe("session/value+1");
+        expect(request?.credentials).toBe("include");
+        expect(url).toBe("/api/storage/blobs/video%3Ademo?session_binding=session%2Fvalue%2B1");
+    });
+
+    test("reset clears remembered revisions", async () => {
+        const requests: RequestInit[] = [];
+        globalThis.fetch = (async (_input, init) => {
+            requests.push(init || {});
+            if (requests.length === 1) return Response.json({ document: { key: "project:1", payload: {}, revision: 7, createdAt: "", updatedAt: "" } });
+            return Response.json({ document: { key: "project:1", payload: {}, revision: 1, createdAt: "", updatedAt: "" } });
+        }) as typeof fetch;
+        const repository = new HttpDocumentRepository();
+        await repository.get("canvas", "project:1");
+        repository.reset();
+        await repository.put("canvas", "project:1", {});
+
+        expect(JSON.parse(String(requests[1]?.body))).toEqual({ payload: {} });
     });
 
     test("submits collection changes through the transactional batch API", async () => {

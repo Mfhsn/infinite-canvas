@@ -18,6 +18,14 @@ import type { StoreWriteStatus } from "@/types/canvas-library";
 const collectionFields = { canvas: "projects", canvas_folders: "folders", assets: "assets" } as const;
 type CollectionDomain = keyof typeof collectionFields;
 
+export type FlushableStateStorage = StateStorage & {
+    flush: () => Promise<void>;
+};
+
+export type WorkspaceAwareStateStorage = FlushableStateStorage & {
+    setItemForWorkspace: (name: string, value: string, acceptedEpoch: number) => Promise<boolean>;
+};
+
 export type GenerationAwarePersistStorage<T> = {
     persist: PersistStorage<T>;
     flush: () => Promise<void>;
@@ -32,7 +40,44 @@ type GenerationAwareOptions<T> = {
     onWriteState?: (status: StoreWriteStatus, error?: Error, generation?: number) => void;
 };
 
-type WriteSnapshot = { name: string; value: string; generation: number };
+type WriteSnapshot = { name: string; value: string; generation: number; workspaceEpoch?: number };
+
+let workspaceEpoch = 0;
+let workspaceWritesPaused = false;
+
+export function beginWorkspaceSwitch() {
+    if (workspaceWritesPaused) throw new Error("A workspace switch is already in progress");
+    workspaceWritesPaused = true;
+    return workspaceEpoch;
+}
+
+export function completeWorkspaceSwitch() {
+    workspaceEpoch += 1;
+    workspaceWritesPaused = false;
+    return workspaceEpoch;
+}
+
+export function abortWorkspaceSwitch() {
+    workspaceWritesPaused = false;
+    return workspaceEpoch;
+}
+
+export function getWorkspaceWriteGateState() {
+    return { epoch: workspaceEpoch, paused: workspaceWritesPaused };
+}
+
+export function resetWorkspaceWriteGateForTests() {
+    workspaceEpoch = 0;
+    workspaceWritesPaused = false;
+}
+
+function captureWorkspaceWriteEpoch() {
+    return workspaceWritesPaused ? null : workspaceEpoch;
+}
+
+function isWorkspaceAwareStorage(storage: StateStorage): storage is WorkspaceAwareStateStorage {
+    return "setItemForWorkspace" in storage && typeof storage.setItemForWorkspace === "function";
+}
 
 function errorValue(error: unknown) {
     return error instanceof Error ? error : new Error(String(error));
@@ -60,7 +105,11 @@ export function createGenerationAwarePersistStorage<T>(base: StateStorage, optio
         enqueue(async () => {
             if (snapshot.generation === options.getGeneration()) options.onWriteState?.("pending", undefined, snapshot.generation);
             try {
-                await base.setItem(snapshot.name, snapshot.value);
+                const written = isWorkspaceAwareStorage(base) && snapshot.workspaceEpoch !== undefined ? await base.setItemForWorkspace(snapshot.name, snapshot.value, snapshot.workspaceEpoch) : (await base.setItem(snapshot.name, snapshot.value), true);
+                if (!written) {
+                    if (snapshot.generation === options.getGeneration()) options.onWriteState?.("success", undefined, snapshot.generation);
+                    return;
+                }
                 if (failed && failed.generation <= snapshot.generation) {
                     failed = null;
                     failedError = null;
@@ -88,16 +137,18 @@ export function createGenerationAwarePersistStorage<T>(base: StateStorage, optio
     const persist: PersistStorage<T> = {
         getItem: async (name) => {
             const value = await base.getItem(name);
-            if (!value) return null;
+            if (!value) return options.initialValue ?? null;
             const normalized = options.normalizeValue?.(JSON.parse(value) as StorageValue<T>) ?? (JSON.parse(value) as StorageValue<T>);
             lastSerialized = JSON.stringify(normalized);
             return normalized;
         },
         setItem: (name, value) => {
+            const acceptedEpoch = isWorkspaceAwareStorage(base) ? captureWorkspaceWriteEpoch() : undefined;
+            if (acceptedEpoch === null) return;
             const serialized = JSON.stringify(value);
             if (serialized === lastSerialized) return;
             lastSerialized = serialized;
-            const snapshot = { name, value: serialized, generation: options.getGeneration() };
+            const snapshot = { name, value: serialized, generation: options.getGeneration(), workspaceEpoch: acceptedEpoch };
             latest = snapshot;
             pending = snapshot;
             options.onWriteState?.("pending", undefined, snapshot.generation);
@@ -133,19 +184,59 @@ export function createGenerationAwarePersistStorage<T>(base: StateStorage, optio
     };
 }
 
-export function createDataStateStorage(domain: CollectionDomain): StateStorage {
+export function createDataStateStorage(domain: CollectionDomain): FlushableStateStorage {
     const store = getDocumentStore(domain);
     const field: PersistedCollectionField = collectionFields[domain];
     const usesOrder = collectionUsesOrder(field);
     const revisionTracker = new CollectionRevisionTracker();
     let orderBaseline: { payload: string; revision: number } | null = null;
     let writeQueue = Promise.resolve();
-    const enqueue = (task: () => Promise<void>) => {
+    const enqueue = <T>(task: () => Promise<T>) => {
         const next = writeQueue.then(task, task);
-        writeQueue = next.catch(() => undefined);
+        writeQueue = next.then(
+            () => undefined,
+            () => undefined,
+        );
         return next;
     };
-    return {
+    const setItemForWorkspace = (name: string, value: string, acceptedEpoch: number) =>
+        enqueue(async () => {
+            if (acceptedEpoch !== workspaceEpoch) return false;
+            if (typeof window === "undefined") return true;
+            try {
+                if ((await getStorageRuntimeConfig()).driver === "mysql") {
+                    if (acceptedEpoch !== workspaceEpoch) return false;
+                    const items = parsePersistedCollection(value, field);
+                    const repository = await getDocumentRepository();
+                    if (acceptedEpoch !== workspaceEpoch) return false;
+                    const plan = revisionTracker.plan(items);
+                    const puts: DocumentBatch["puts"] = plan.changed.map(({ item, revision }) => ({ key: item.id, payload: item, revision }));
+                    if (usesOrder) {
+                        const order = items.map((item) => item.id);
+                        const orderPayload = serializeStoragePayload(order);
+                        if (orderBaseline?.payload !== orderPayload) puts.push({ key: COLLECTION_ORDER_KEY, payload: order, revision: orderBaseline?.revision ?? null });
+                    }
+                    if (!puts.length && !plan.deleted.length) return true;
+                    if (acceptedEpoch !== workspaceEpoch) return false;
+                    const result = await repository.batch(domain, { puts, deletes: plan.deleted.map(({ id, revision }) => ({ key: id, revision })) });
+                    result.deleted.forEach((id) => revisionTracker.deleted(id));
+                    result.documents.forEach((document) => {
+                        if (document.key === COLLECTION_ORDER_KEY) orderBaseline = { payload: serializeStoragePayload(document.payload), revision: document.revision };
+                        else if (document.payload && typeof document.payload === "object" && !Array.isArray(document.payload)) revisionTracker.saved(document as typeof document & { payload: Record<string, unknown> });
+                    });
+                    return true;
+                }
+                if (acceptedEpoch !== workspaceEpoch) return false;
+                await store.setItem(name, value);
+                return true;
+            } catch (error) {
+                if ((await getStorageRuntimeConfig()).driver !== "browser") throw error;
+                if (acceptedEpoch !== workspaceEpoch) return false;
+                window.localStorage.setItem(name, value);
+                return true;
+            }
+        });
+    const storage: WorkspaceAwareStateStorage = {
         getItem: async (name) => {
             if (typeof window === "undefined") return null;
             try {
@@ -170,35 +261,12 @@ export function createDataStateStorage(domain: CollectionDomain): StateStorage {
                 return window.localStorage.getItem(name);
             }
         },
-        setItem: (name, value) =>
-            enqueue(async () => {
-                if (typeof window === "undefined") return;
-                try {
-                    if ((await getStorageRuntimeConfig()).driver === "mysql") {
-                        const items = parsePersistedCollection(value, field);
-                        const repository = await getDocumentRepository();
-                        const plan = revisionTracker.plan(items);
-                        const puts: DocumentBatch["puts"] = plan.changed.map(({ item, revision }) => ({ key: item.id, payload: item, revision }));
-                        if (usesOrder) {
-                            const order = items.map((item) => item.id);
-                            const orderPayload = serializeStoragePayload(order);
-                            if (orderBaseline?.payload !== orderPayload) puts.push({ key: COLLECTION_ORDER_KEY, payload: order, revision: orderBaseline?.revision ?? null });
-                        }
-                        if (!puts.length && !plan.deleted.length) return;
-                        const result = await repository.batch(domain, { puts, deletes: plan.deleted.map(({ id, revision }) => ({ key: id, revision })) });
-                        result.deleted.forEach((id) => revisionTracker.deleted(id));
-                        result.documents.forEach((document) => {
-                            if (document.key === COLLECTION_ORDER_KEY) orderBaseline = { payload: serializeStoragePayload(document.payload), revision: document.revision };
-                            else if (document.payload && typeof document.payload === "object" && !Array.isArray(document.payload)) revisionTracker.saved(document as typeof document & { payload: Record<string, unknown> });
-                        });
-                        return;
-                    }
-                    await store.setItem(name, value);
-                } catch (error) {
-                    if ((await getStorageRuntimeConfig()).driver !== "browser") throw error;
-                    window.localStorage.setItem(name, value);
-                }
-            }),
+        setItem: (name, value) => {
+            const acceptedEpoch = captureWorkspaceWriteEpoch();
+            if (acceptedEpoch === null) return Promise.resolve();
+            return setItemForWorkspace(name, value, acceptedEpoch).then(() => undefined);
+        },
+        setItemForWorkspace,
         removeItem: (name) =>
             enqueue(async () => {
                 if (typeof window === "undefined") return;
@@ -217,5 +285,9 @@ export function createDataStateStorage(domain: CollectionDomain): StateStorage {
                     window.localStorage.removeItem(name);
                 }
             }),
+        flush: async () => {
+            await writeQueue;
+        },
     };
+    return storage;
 }

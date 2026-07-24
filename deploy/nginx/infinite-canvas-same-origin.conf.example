@@ -1,0 +1,79 @@
+# Merge these locations into the existing HTTPS server block for the host platform.
+# Replace 127.0.0.1:8080 with the real host-platform upstream when using this as a full example.
+
+upstream infinite_canvas_app {
+    server 127.0.0.1:3000;
+    keepalive 32;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name 106.75.147.147;
+
+    ssl_certificate     /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/private.key;
+
+    client_max_body_size 512m;
+
+    location = /infinite-canvas {
+        return 308 /infinite-canvas/;
+    }
+
+    # Keep the /infinite-canvas prefix. The Node static server strips the configured base path.
+    location ^~ /infinite-canvas/ {
+        proxy_pass http://infinite_canvas_app;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 600s;
+        proxy_read_timeout 600s;
+    }
+
+    location ^~ /api/platform/ {
+        proxy_pass http://infinite_canvas_app;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+    }
+
+    location ^~ /api/storage/ {
+        proxy_pass http://infinite_canvas_app;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_request_buffering off;
+        proxy_read_timeout 600s;
+    }
+
+    location ^~ /__dream_api_proxy/ {
+        proxy_pass http://infinite_canvas_app;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_request_buffering off;
+        proxy_read_timeout 600s;
+    }
+
+    location = /__dream_media_proxy {
+        proxy_pass http://infinite_canvas_app;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+    }
+
+    # Keep the host platform's existing location / and /api/integration/ rules below these locations.
+}

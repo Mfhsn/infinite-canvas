@@ -117,6 +117,7 @@ export const useCanvasStore = create<CanvasStore>()(
         {
             name: CANVAS_STORE_KEY,
             storage: canvasStorage.persist,
+            skipHydration: true,
             partialize: (state) => ({ projects: state.projects }) as StorageValue<CanvasStore>["state"],
             onRehydrateStorage: () => (_state, error) => {
                 useCanvasStore.setState({

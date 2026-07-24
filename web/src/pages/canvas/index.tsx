@@ -37,12 +37,14 @@ export default function CanvasPage() {
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const projectsHydrated = useCanvasStore((state) => state.hydrated);
     const projectsHydrationStatus = useCanvasStore((state) => state.hydrationStatus);
+    const projectsHydrationError = useCanvasStore((state) => state.lastError);
     const retryProjectsHydration = useCanvasStore((state) => state.retryHydration);
     const projects = useCanvasStore((state) => state.projects);
     const createProject = useCanvasStore((state) => state.createProject);
     const updateProject = useCanvasStore((state) => state.updateProject);
     const foldersHydrated = useCanvasFolderStore((state) => state.hydrated);
     const foldersHydrationStatus = useCanvasFolderStore((state) => state.hydrationStatus);
+    const foldersHydrationError = useCanvasFolderStore((state) => state.lastError);
     const retryFoldersHydration = useCanvasFolderStore((state) => state.retryHydration);
     const folders = useCanvasFolderStore((state) => state.folders);
     const createFolder = useCanvasFolderStore((state) => state.createFolder);
@@ -59,6 +61,7 @@ export default function CanvasPage() {
     const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
     const hydrated = projectsHydrated && foldersHydrated;
     const hydrationFailed = projectsHydrationStatus === "error" || foldersHydrationStatus === "error";
+    const hydrationErrors = [...new Set([projectsHydrationError, foldersHydrationError].filter((value): value is string => Boolean(value)))];
     const activeFolders = useMemo(() => folders.filter((folder) => !folder.deletedAt), [folders]);
     const currentFolder = route.folder ? activeFolders.find((folder) => folder.id === route.folder) || null : null;
     const currentFolderId = currentFolder?.id || null;
@@ -225,6 +228,11 @@ export default function CanvasPage() {
                     <section className="flex min-h-80 flex-col items-center justify-center border-y border-stone-200 text-center dark:border-stone-800">
                         <h2 className="text-lg font-medium">{t("canvas.libraryLoadFailed")}</h2>
                         <p className="mt-2 text-sm text-stone-500">{t("canvas.libraryLoadFailedDesc")}</p>
+                        {hydrationErrors.length ? (
+                            <div className="mt-3 max-w-2xl space-y-1 text-sm text-red-600 dark:text-red-400">
+                                {hydrationErrors.map((error) => <p key={error}>{error}</p>)}
+                            </div>
+                        ) : null}
                         <Button
                             className="mt-5"
                             onClick={() => void Promise.all([projectsHydrationStatus === "error" ? retryProjectsHydration() : Promise.resolve(), foldersHydrationStatus === "error" ? retryFoldersHydration() : Promise.resolve()]).catch(() => undefined)}

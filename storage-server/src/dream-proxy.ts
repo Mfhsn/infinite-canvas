@@ -1,50 +1,47 @@
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
 import https from 'node:https';
-import tls from 'node:tls';
+import { SESSION_BINDING_HEADER, type IntegrationSessionService } from './integration-session.js';
 import type { DreamProxyConfig } from './types.js';
+import { upstreamRequestOptions } from './upstream-transport.js';
 
 const DREAM_API_PROXY_PATH = '/__dream_api_proxy';
 const DREAM_MEDIA_PROXY_PATH = '/__dream_media_proxy';
 const MAX_DREAM_MEDIA_BYTES = 100 * 1024 * 1024;
 
-export async function handleDreamProxy(req: IncomingMessage, res: ServerResponse, config?: DreamProxyConfig): Promise<boolean> {
+export async function handleDreamProxy(req: IncomingMessage, res: ServerResponse, config?: DreamProxyConfig, integrationEnabled = false, sessions?: IntegrationSessionService): Promise<boolean> {
   const requestUrl = new URL(req.url || '/', 'http://localhost');
   if (requestUrl.pathname.startsWith(`${DREAM_API_PROXY_PATH}/`)) {
-    await proxyDreamApi(req, res, requestUrl, config);
+    const session = await resolveRequiredIntegrationSession(req, res, integrationEnabled, sessions);
+    if (integrationEnabled && !session) return true;
+    // Dream/LLM/TTS are served by the host platform's model service. That
+    // service validates the host user's external access token, while the
+    // integration local_token is only valid for the integration context API.
+    await proxyDreamApi(req, res, requestUrl, config, session?.externalToken ?? session?.localToken);
     return true;
   }
   if (requestUrl.pathname === DREAM_MEDIA_PROXY_PATH) {
+    const session = await resolveRequiredIntegrationSession(req, res, integrationEnabled, sessions);
+    if (integrationEnabled && !session) return true;
     await proxyDreamMedia(req, res, requestUrl.searchParams.get('url') || '');
     return true;
   }
   return false;
 }
 
-async function proxyDreamApi(req: IncomingMessage, res: ServerResponse, requestUrl: URL, config?: DreamProxyConfig): Promise<void> {
+async function proxyDreamApi(req: IncomingMessage, res: ServerResponse, requestUrl: URL, config?: DreamProxyConfig, localToken?: string): Promise<void> {
   const upstream = parseDreamApiUrl(config?.baseUrl);
   if (!upstream) {
     sendProxyError(res, 503, 'Dream API proxy is not configured');
     return;
   }
 
-  const tlsServerName = config?.tlsServerName.trim() || '';
-  const useTls = upstream.protocol === 'https:' || Boolean(tlsServerName);
   const path = `${requestUrl.pathname.slice(DREAM_API_PROXY_PATH.length)}${requestUrl.search}`;
-  const headers = proxyRequestHeaders(req.headers, tlsServerName || upstream.host);
-  const options: https.RequestOptions = {
-    hostname: upstream.hostname,
-    port: Number(upstream.port) || (useTls ? 443 : 80),
-    method: req.method,
-    path,
-    headers,
-  };
-  if (useTls) {
-    options.rejectUnauthorized = true;
-    if (tlsServerName) {
-      options.servername = config?.disableSni ? '' : tlsServerName;
-      options.checkServerIdentity = (_hostname, certificate) => tls.checkServerIdentity(tlsServerName, certificate);
-    }
-  }
+  const headers = proxyRequestHeaders(req.headers, config?.tlsServerName.trim() || upstream.host, localToken);
+  const { useTls, options } = upstreamRequestOptions({
+    baseUrl: upstream.toString(),
+    tlsServerName: config?.tlsServerName,
+    disableSni: config?.disableSni,
+  }, { method: req.method, path, headers });
 
   await new Promise<void>((resolve) => {
     let settled = false;
@@ -75,6 +72,26 @@ async function proxyDreamApi(req: IncomingMessage, res: ServerResponse, requestU
   });
 }
 
+async function resolveRequiredIntegrationSession(req: IncomingMessage, res: ServerResponse, enabled: boolean, sessions?: IntegrationSessionService) {
+  if (!enabled) return null;
+  if (!sessions) {
+    sendProxyError(res, 503, 'Platform integration is not ready');
+    return null;
+  }
+  const session = await sessions.resolve(req);
+  if (!session) {
+    sendProxyError(res, 401, 'Authentication required');
+    return null;
+  }
+  const binding = req.headers[SESSION_BINDING_HEADER.toLowerCase()];
+  const supplied = Array.isArray(binding) ? binding[0] : binding;
+  if (!sessions.matchesBinding(session, supplied)) {
+    sendProxyError(res, 403, 'Session binding does not match');
+    return null;
+  }
+  return session;
+}
+
 async function proxyDreamMedia(req: IncomingMessage, res: ServerResponse, target: string): Promise<void> {
   if (req.method !== 'GET') {
     res.statusCode = 405;
@@ -89,7 +106,9 @@ async function proxyDreamMedia(req: IncomingMessage, res: ServerResponse, target
   }
   try {
     const upstream = await fetch(target, {
-      headers: { Accept: 'image/*,video/*,audio/*,*/*;q=0.8' },
+      // CDN result URLs are already signed. Never disclose the platform local_token
+      // to a third-party media host; the Canvas session only gates this local proxy.
+      headers: dreamMediaRequestHeaders(),
       redirect: 'manual',
     });
     if (!upstream.ok) {
@@ -120,6 +139,10 @@ async function proxyDreamMedia(req: IncomingMessage, res: ServerResponse, target
   }
 }
 
+export function dreamMediaRequestHeaders(): Record<string, string> {
+  return { Accept: 'image/*,video/*,audio/*,*/*;q=0.8' };
+}
+
 function parseDreamApiUrl(value: string | undefined): URL | null {
   if (!value?.trim()) return null;
   try {
@@ -130,9 +153,13 @@ function parseDreamApiUrl(value: string | undefined): URL | null {
   }
 }
 
-function proxyRequestHeaders(source: IncomingHttpHeaders, host: string): http.OutgoingHttpHeaders {
-  const headers: http.OutgoingHttpHeaders = { ...source, host, connection: 'close', 'accept-encoding': 'identity' };
-  delete headers['proxy-connection'];
+function proxyRequestHeaders(source: IncomingHttpHeaders, host: string, localToken?: string): http.OutgoingHttpHeaders {
+  const headers: http.OutgoingHttpHeaders = { host, connection: 'close', 'accept-encoding': 'identity' };
+  for (const name of ['accept', 'content-type', 'content-length', 'range'] as const) {
+    if (source[name] !== undefined) headers[name] = source[name];
+  }
+  if (localToken) headers.authorization = `Bearer ${localToken}`;
+  else if (source.authorization !== undefined) headers.authorization = source.authorization;
   return headers;
 }
 

@@ -6,6 +6,7 @@ import { AppConfigModal } from "@/components/layout/app-config-modal";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { useI18n } from "@/i18n/use-i18n";
+import { publicAssetPath } from "@/lib/app-base-path";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 
@@ -27,8 +28,8 @@ export function AppTopNav() {
                                 <span
                                     className="size-5 shrink-0 bg-current"
                                     style={{
-                                        mask: "url(/logo.svg) center / contain no-repeat",
-                                        WebkitMask: "url(/logo.svg) center / contain no-repeat",
+                                        mask: `url(${publicAssetPath("logo.svg")}) center / contain no-repeat`,
+                                        WebkitMask: `url(${publicAssetPath("logo.svg")}) center / contain no-repeat`,
                                     }}
                                 />
                                 <span className="text-base font-medium">{t("app.name")}</span>

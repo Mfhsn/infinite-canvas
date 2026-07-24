@@ -18,7 +18,17 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./
-RUN --mount=type=secret,id=app_env,target=/app/.env,required=false bun run build
+RUN --mount=type=secret,id=app_env,target=/run/secrets/app_env,required=false \
+    sh -eu -c '\
+      if [ -f /run/secrets/app_env ]; then \
+        if grep -Eiq "^INTEGRATION_ENABLED=(1|true)[[:space:]]*$" /run/secrets/app_env; then \
+          grep -Ev "^(VITE_AI_API_KEY|VITE_AI_CHANNELS_JSON)=" /run/secrets/app_env > /app/.env; \
+        else \
+          cp /run/secrets/app_env /app/.env; \
+        fi; \
+      fi; \
+      bun run build; \
+      rm -f /app/.env'
 
 # 编译同源 Storage API。
 FROM ${NODE_IMAGE} AS storage-build
@@ -57,7 +67,7 @@ RUN chmod +x /app/runtime-env.sh
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD wget -qO- http://127.0.0.1:3000/ >/dev/null || exit 1
+    CMD ["sh", "-c", "wget -qO- \"http://127.0.0.1:3000${VITE_APP_BASE_PATH:-/}\" >/dev/null || exit 1"]
 
 ENTRYPOINT ["/app/runtime-env.sh"]
 CMD ["node", "/app/storage-server/dist/server.js"]

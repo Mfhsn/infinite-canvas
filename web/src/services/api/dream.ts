@@ -6,12 +6,14 @@ import { audioMimeType, normalizeAudioSpeedValue, normalizeAudioVoiceValue } fro
 import { AppError, requestError } from "@/lib/app-error";
 import { resolveDreamImageDimensions } from "@/lib/dream-image-size";
 import { dataUrlToFile } from "@/lib/image-utils";
-import { DREAM_SEEDANCE_15_MODEL, DREAM_SEEDANCE_20_MODEL, dreamOmniReferenceIssue, normalizeDreamVideoDuration, normalizeDreamVideoMode, normalizeDreamVideoRatio, normalizeDreamVideoSeed } from "@/lib/seedance-video";
+import { DREAM_SEEDANCE_15_MODEL, DREAM_SEEDANCE_20_MODEL, dreamOmniReferenceIssue, ensureSeedanceReferenceMentions, normalizeDreamVideoDuration, normalizeDreamVideoMode, normalizeDreamVideoRatio, normalizeDreamVideoSeed } from "@/lib/seedance-video";
 import type { I18nKey } from "@/i18n/messages";
-import { DREAM_API_PROXY_PATH, dreamApiProxyUrl, dreamMediaProxyUrl } from "@/services/api/dream-media";
+import { DREAM_API_PROXY_PATH, DREAM_MEDIA_PROXY_PATH, dreamApiProxyUrl, dreamMediaProxyUrl } from "@/services/api/dream-media";
+import { hasPlatformSessionBinding, platformSessionBindingHeaders } from "@/services/platform-session";
 import { getMediaBlob } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { DREAM_API_MODELS, modelOptionName, type AiConfig } from "@/stores/use-config-store";
+import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -32,7 +34,7 @@ export async function requestDreamImageGeneration(config: AiConfig, prompt: stri
     const response = await axios.post<DreamApiEnvelope>(
         dreamApiUrl(config, "/api/v1/dream/dream_image"),
         {
-            project_id: 0,
+            project_id: dreamProjectId(),
             dream_image_req_key: modelOptionName(config.model),
             script_text: prompt,
             width,
@@ -53,7 +55,7 @@ export async function requestDreamImageEdit(config: AiConfig, prompt: string, re
     const response = await axios.post<DreamApiEnvelope>(
         dreamApiUrl(config, "/api/v1/dream/dream_image"),
         {
-            project_id: 0,
+            project_id: dreamProjectId(),
             dream_image_req_key: modelOptionName(config.model),
             image_asset_ids: await dreamImageAssetIds(config, references, options),
             script_text: prompt,
@@ -130,6 +132,7 @@ function dreamHeaders(config: Pick<AiConfig, "apiKey">) {
 }
 
 function dreamAuthHeaders(config: Pick<AiConfig, "apiKey">) {
+    if (hasPlatformSessionBinding()) return platformSessionBindingHeaders();
     const apiKey = config.apiKey.trim();
     if (!apiKey) throw new AppError("error.dream.authRequired");
     return { Authorization: `Bearer ${apiKey}` };
@@ -139,7 +142,7 @@ async function requestDreamInpainting(config: AiConfig, prompt: string, referenc
     const response = await axios.post<DreamApiEnvelope>(
         dreamApiUrl(config, "/api/v1/dream/inpainting_edit"),
         {
-            project_id: 0,
+            project_id: dreamProjectId(),
             req_key: modelOptionName(config.model) || "i2i_inpainting_edit",
             task_type: "dream",
             image_asset_ids: await dreamImageAssetIds(config, [...references, mask], options),
@@ -155,7 +158,7 @@ async function requestDreamOutpainting(config: AiConfig, prompt: string, referen
     const response = await axios.post<DreamApiEnvelope>(
         dreamApiUrl(config, "/api/v1/dream/outpainting"),
         {
-            project_id: 0,
+            project_id: dreamProjectId(),
             req_key: modelOptionName(config.model) || "i2i_outpainting",
             task_type: "dream",
             image_asset_ids: await dreamImageAssetIds(config, references, options),
@@ -375,13 +378,14 @@ async function dreamImageAssetIds(config: AiConfig, images: ReferenceImage[], op
 }
 
 async function dreamVideoRequestBody(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions) {
-    const scriptText = prompt.trim();
-    if (!scriptText) throw new AppError("video.promptRequired");
+    const promptText = prompt.trim();
+    if (!promptText) throw new AppError("video.promptRequired");
     if (config.videoMode === "subject" && !isDreamSeedance20Model(model)) throw dreamError("error.dream.subjectModelRequired");
     const mode = normalizeDreamVideoMode(config.videoMode, model);
+    const scriptText = mode === "subject" ? ensureSeedanceReferenceMentions(promptText, references, videoReferences, audioReferences) : promptText;
     const body: Record<string, unknown> = {
         platform_id: config.platformId,
-        project_id: 0,
+        project_id: dreamProjectId(),
         // Seedance 2.0's omni-reference mode uses reference2video while its
         // uploaded image, video, and audio assets remain flat ID lists.
         action_type: mode === "subject" ? "reference2video" : "start-end2video",
@@ -403,10 +407,18 @@ async function dreamVideoRequestBody(config: AiConfig, model: string, prompt: st
     if (!isDreamSeedance20Model(model)) throw dreamError("error.dream.subjectModelRequired");
     const referenceIssue = dreamOmniReferenceIssue(references, videoReferences, audioReferences);
     if (referenceIssue) throw dreamError(referenceIssue.key);
-    body.image_asset_ids = await dreamImageAssetIds(config, references, options);
-    body.video_ids = await dreamVideoAssetIds(config, videoReferences, options);
-    body.audio_ids = await dreamAudioAssetIds(config, audioReferences, options);
+    // Keep the documented multimodal lists present even when a specific media
+    // kind is unused. Some upstream adapters treat omitted lists as iterable
+    // and otherwise fail before ModelVerse can validate the request.
+    body.image_asset_ids = (await dreamImageAssetIds(config, references, options)) || [];
+    body.video_ids = (await dreamVideoAssetIds(config, videoReferences, options)) || [];
+    body.audio_ids = (await dreamAudioAssetIds(config, audioReferences, options)) || [];
     return body;
+}
+
+function dreamProjectId() {
+    const projectId = useUserStore.getState().projectContext?.localProjectId;
+    return typeof projectId === "number" && Number.isSafeInteger(projectId) && projectId >= 0 ? projectId : 0;
 }
 
 function dreamStartEndReferences(references: ReferenceImage[]) {
@@ -552,13 +564,18 @@ function boolConfig(value: string, fallback: boolean) {
 function readDreamRequestError(error: unknown, fallback: I18nKey) {
     if (error instanceof AppError) return error;
     if (axios.isCancel(error)) return new AppError("error.requestCancelled");
-    if (axios.isAxiosError<{ detail?: unknown; message?: string; msg?: string }>(error)) {
+    if (axios.isAxiosError<{ detail?: unknown; message?: string; msg?: string; error?: unknown }>(error)) {
         const data = error.response?.data;
-        const rawMessage = dreamValidationDetail(data?.detail) || data?.message || data?.msg;
+        const rawMessage = dreamValidationDetail(data?.detail) || data?.message || data?.msg || dreamErrorValue(data?.error);
         return requestError(error.response?.status, fallback, rawMessage);
     }
     if (error instanceof DOMException && error.name === "AbortError") return new AppError("error.requestCancelled");
     return error instanceof Error ? error : requestError(undefined, fallback);
+}
+
+function dreamErrorValue(value: unknown) {
+    if (!isRecord(value)) return "";
+    return stringValue(value.message) || stringValue(value.msg) || stringValue(value.detail);
 }
 
 function dreamValidationDetail(detail: unknown) {
@@ -609,13 +626,13 @@ export async function requestDreamMediaBlob(config: AiConfig, url: string, optio
 }
 
 function dreamMediaHeaders(config: Pick<AiConfig, "apiKey" | "baseUrl">, url: string) {
-    if (url.startsWith(DREAM_API_PROXY_PATH)) return { Authorization: `Bearer ${config.apiKey.trim()}` };
+    if (url.startsWith(DREAM_API_PROXY_PATH) || url.startsWith(DREAM_MEDIA_PROXY_PATH)) return dreamAuthHeaders(config);
     try {
         if (new URL(url).origin !== new URL(config.baseUrl).origin) return undefined;
     } catch {
         return undefined;
     }
-    return { Authorization: `Bearer ${config.apiKey.trim()}` };
+    return dreamAuthHeaders(config);
 }
 
 function dreamProxyEnabled() {

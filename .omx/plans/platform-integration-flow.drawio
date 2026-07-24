@@ -1,0 +1,183 @@
+<mxfile host="65bd71144e">
+    <diagram id="platform-integration-flow" name="平台接入主流程">
+        <mxGraphModel dx="1192" dy="548" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1400" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title" value="无限画布 × 外部平台 Integration 接入流程" style="text;html=1;align=center;verticalAlign=middle;fontSize=24;fontStyle=1;fontColor=#172B4D;" parent="1" vertex="1">
+                    <mxGeometry x="420" y="20" width="920" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="lane-platform" value="外部平台 / Integration API" style="swimlane;html=1;horizontal=0;startSize=34;fillColor=#E3F2FD;strokeColor=#1E88E5;fontStyle=1;fontSize=15;" parent="1" vertex="1">
+                    <mxGeometry x="20" y="90" width="310" height="1180" as="geometry"/>
+                </mxCell>
+                <mxCell id="lane-browser" value="浏览器 / 无限画布 UI" style="swimlane;html=1;horizontal=0;startSize=34;fillColor=#F3E5F5;strokeColor=#8E24AA;fontStyle=1;fontSize=15;" parent="1" vertex="1">
+                    <mxGeometry x="350" y="90" width="330" height="1180" as="geometry"/>
+                </mxCell>
+                <mxCell id="lane-bff" value="Canvas 同源 BFF / storage-server" style="swimlane;html=1;horizontal=0;startSize=34;fillColor=#E8F5E9;strokeColor=#43A047;fontStyle=1;fontSize=15;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="90" width="390" height="1180" as="geometry"/>
+                </mxCell>
+                <mxCell id="lane-data" value="MySQL / 会话与业务数据" style="swimlane;html=1;horizontal=0;startSize=34;fillColor=#FFF8E1;strokeColor=#F9A825;fontStyle=1;fontSize=15;" parent="1" vertex="1">
+                    <mxGeometry x="1110" y="90" width="330" height="1180" as="geometry"/>
+                </mxCell>
+                <mxCell id="lane-ai" value="Dream / LLM / TTS / Task API" style="swimlane;html=1;horizontal=0;startSize=34;fillColor=#FBE9E7;strokeColor=#F4511E;fontStyle=1;fontSize=15;" parent="1" vertex="1">
+                    <mxGeometry x="1460" y="90" width="310" height="1180" as="geometry"/>
+                </mxCell>
+                <mxCell id="p-entry" value="1. 用户从现有平台进入画布&#xa;推荐携带一次性 integration_ticket" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1E88E5;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="55" y="145" width="240" height="75" as="geometry"/>
+                </mxCell>
+                <mxCell id="b-bootstrap" value="2. ClientRootInit 检查会话&#xa;有 ticket 则请求同源 exchange&#xa;无 ticket 则请求 current context" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#8E24AA;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="140" width="250" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="s-exchange" value="3. POST /api/platform/session/exchange&#xa;服务器消费 ticket/外部凭证&#xa;不向浏览器返回上游 Token" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#43A047;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="755" y="140" width="280" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="p-exchange" value="4. POST /api/integration/session/exchange&#xa;返回 local_token、expires_at、uid、&#xa;permission_ids、current_points、项目上下文" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1E88E5;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="55" y="270" width="240" height="105" as="geometry"/>
+                </mxCell>
+                <mxCell id="d-session" value="5. 保存服务器会话&#xa;Token AES-GCM 加密&#xa;Cookie 只保存随机 session id&#xa;HttpOnly + Secure + SameSite" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFECB3;strokeColor=#F9A825;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="1155" y="260" width="240" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="b-authenticated" value="6. UI 进入 authenticated 状态&#xa;显示用户、积分、平台项目&#xa;不保存 external/local token" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#8E24AA;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="285" width="250" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="b-projects" value="7. 打开平台项目选择器&#xa;列表 / 查看 / 申请&#xa;首版不与 CanvasProject 混用" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#8E24AA;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="440" width="250" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="s-projects" value="8. BFF 使用加密的 external_token&#xa;调用 projects/detail/apply&#xa;切换时建立新项目会话" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#43A047;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="755" y="440" width="280" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="p-projects" value="9. External Projects API&#xa;X-External-Token&#xa;返回 project_id / points / permission[]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1E88E5;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="55" y="440" width="240" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="d-binding" value="10. 更新项目映射与会话&#xa;namespace = hash(source_system:uid:local_project_id)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFECB3;strokeColor=#F9A825;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="1155" y="445" width="240" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="b-storage" value="11. 读写画布 / 文件夹 / 素材&#xa;浏览器只调用同源 /api/storage" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#8E24AA;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="620" width="250" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="s-auth-storage" value="12. requireAuthContext()&#xa;验证 HttpOnly 会话&#xa;服务器派生 namespace&#xa;禁止客户端选择租户" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#43A047;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="755" y="605" width="280" height="105" as="geometry"/>
+                </mxCell>
+                <mxCell id="d-storage" value="13. storage_documents / storage_blobs&#xa;按 namespace 物理分区&#xa;用户与项目间不可见" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFECB3;strokeColor=#F9A825;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="1155" y="615" width="240" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="b-generate" value="14. 提交图像 / 视频 / 音频 / LLM&#xa;显示预估积分，生成 request-id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#8E24AA;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="790" width="250" height="85" as="geometry"/>
+                </mxCell>
+                <mxCell id="s-ai-proxy" value="15. AI BFF 从会话注入 local_token&#xa;超时后先查询任务&#xa;不盲目重提，防止重复扣分" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#43A047;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="755" y="785" width="280" height="95" as="geometry"/>
+                </mxCell>
+                <mxCell id="a-task" value="16. 上游创建任务并扣分&#xa;返回 task_id / status / result&#xa;失败与退分以平台规则为准" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCCBC;strokeColor=#F4511E;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="1500" y="785" width="230" height="95" as="geometry"/>
+                </mxCell>
+                <mxCell id="s-refresh" value="17. 任务提交/完成/积分不足后&#xa;请求 context/current 刷新权威积分" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#43A047;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="755" y="930" width="280" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="p-context" value="18. GET /api/integration/context/current&#xa;Authorization: Bearer local_token&#xa;返回最新 current_points / permission_ids" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1E88E5;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="55" y="925" width="240" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="b-points" value="19. 更新顶部积分和权限 UI&#xa;标记最后刷新时间&#xa;不在前端自行生成权威余额" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#8E24AA;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="930" width="250" height="85" as="geometry"/>
+                </mxCell>
+                <mxCell id="b-logout" value="20. 用户登出" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#8E24AA;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="1090" width="250" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="s-logout" value="21. 注销外部令牌&#xa;删除本地会话并清 Cookie" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#43A047;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="755" y="1080" width="280" height="75" as="geometry"/>
+                </mxCell>
+                <mxCell id="p-logout" value="22. POST /api/integration/external/auth/logout&#xa;X-External-Token" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1E88E5;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="55" y="1080" width="240" height="75" as="geometry"/>
+                </mxCell>
+                <mxCell id="d-delete-session" value="23. 删除 integration_sessions&#xa;业务数据保留，下次登录可恢复" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFECB3;strokeColor=#F9A825;fontSize=13;arcSize=8;" parent="1" vertex="1">
+                    <mxGeometry x="1155" y="1080" width="240" height="75" as="geometry"/>
+                </mxCell>
+                <mxCell id="note-contract" value="⚠ 联调门禁：文档尚未明确 exchange 凭证位置、local_token 刷新、项目切换参数、积分扣减/退还与 permission ID 矩阵。这些契约未确认前不进入生产实施。" style="shape=note;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FB8C00;fontColor=#8A4B08;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="1185" width="740" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="p-entry" target="b-bootstrap" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="360" y="183"/>
+                            <mxPoint x="360" y="183"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="b-bootstrap" target="s-exchange" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="s-exchange" target="p-exchange" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="895" y="240"/>
+                            <mxPoint x="175" y="240"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="p-exchange" target="s-exchange" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="930" y="323"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="s-exchange" target="d-session" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="d-session" target="b-authenticated" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1030" y="330"/>
+                            <mxPoint x="1030" y="330"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="b-projects" target="s-projects" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="s-projects" target="p-projects" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="s-projects" target="d-binding" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="b-storage" target="s-auth-storage" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="s-auth-storage" target="d-storage" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="b-generate" target="s-ai-proxy" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="s-ai-proxy" target="a-task" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="a-task" target="s-refresh" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="s-refresh" target="p-context" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="755" y="982" as="sourcePoint"/>
+                        <mxPoint x="640" y="984" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="700" y="982"/>
+                            <mxPoint x="700" y="984"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="b-logout" target="s-logout" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="s-logout" target="p-logout" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#546E7A;" parent="1" source="s-logout" target="d-delete-session" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

@@ -3,6 +3,7 @@ import { Button, Tooltip } from "antd";
 import { ArrowUp, CheckCircle2, CircleAlert, ImagePlus, LoaderCircle, UserRound, Wrench, X, XCircle } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { publicAssetPath } from "@/lib/app-base-path";
 import type { LocalUser } from "@/stores/use-user-store";
 import { useI18n } from "@/i18n/use-i18n";
 
@@ -262,7 +263,7 @@ function AgentDetailBlock({ detail, theme }: { detail: unknown; theme: (typeof c
 function AgentAvatar({ theme }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     return (
         <span className="grid size-8 shrink-0 place-items-center" role="img" aria-label="OpenAI">
-            <span className="size-5 opacity-80" style={{ background: theme.node.text, WebkitMask: "url(/icons/openai.svg) center / contain no-repeat", mask: "url(/icons/openai.svg) center / contain no-repeat" }} />
+            <span className="size-5 opacity-80" style={{ background: theme.node.text, WebkitMask: `url(${publicAssetPath("icons/openai.svg")}) center / contain no-repeat`, mask: `url(${publicAssetPath("icons/openai.svg")}) center / contain no-repeat` }} />
         </span>
     );
 }

@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { afterEach } from "bun:test";
+import { CANVAS_SESSION_BINDING_HEADER, capturePlatformSessionBinding, clearPlatformSessionBinding } from "@/services/platform-session";
 
 (globalThis as typeof globalThis & { __APP_VERSION__: string }).__APP_VERSION__ = "test";
 process.env.VITE_AI_PLATFORM_ID = "6";
+
+afterEach(() => clearPlatformSessionBinding());
 
 describe("built-in AI channel defaults", () => {
     test("uses only the API example channel and its documented defaults", async () => {
@@ -22,6 +26,8 @@ describe("built-in AI channel defaults", () => {
         expect(defaultConfig.platformId).toBe(6);
         expect(resolveModelRequestConfig(defaultConfig, defaultConfig.imageModel).platformId).toBe(6);
         expect(useConfigStore.getState().isAiConfigReady({ ...defaultConfig, apiKey: "", channels: defaultConfig.channels.map((channel) => ({ ...channel, apiKey: "" })) }, defaultConfig.imageModel)).toBe(false);
+        capturePlatformSessionBinding(new Response(null, { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding-1" } }));
+        expect(useConfigStore.getState().isAiConfigReady({ ...defaultConfig, apiKey: "", channels: defaultConfig.channels.map((channel) => ({ ...channel, apiKey: "" })) }, defaultConfig.imageModel)).toBe(true);
         expect(defaultConfig.imageModels.map(modelOptionName)).toEqual(DREAM_IMAGE_MODELS);
         expect(defaultConfig.videoModels.map(modelOptionName)).toEqual(DREAM_VIDEO_MODELS);
         expect(modelOptionName(defaultConfig.imageModel)).toBe("doubao-seedream-4.5");
@@ -42,5 +48,21 @@ describe("built-in AI channel defaults", () => {
         expect(dreamVideoModes("doubao-seedance-1-5-pro-251215")).toEqual(["start-end"]);
         expect(defaultDreamVideoMode("doubao-seedance-2-0-260128")).toBe("subject");
         expect(dreamVideoModes("doubao-seedance-2-0-260128")).toEqual(["start-end", "subject"]);
+    });
+
+    test("removes legacy browser credentials when Integration is enabled", async () => {
+        const { clearPersistedAiCredentials, useConfigStore } = await import("@/stores/use-config-store");
+        const original = useConfigStore.getState().config;
+        useConfigStore.setState({
+            config: {
+                ...original,
+                apiKey: "legacy-key",
+                channels: original.channels.map((channel) => ({ ...channel, apiKey: "legacy-channel-key" })),
+            },
+        });
+        clearPersistedAiCredentials();
+        expect(useConfigStore.getState().config.apiKey).toBe("");
+        expect(useConfigStore.getState().config.channels.every((channel) => channel.apiKey === "")).toBe(true);
+        useConfigStore.setState({ config: original });
     });
 });

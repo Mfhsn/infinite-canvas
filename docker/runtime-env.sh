@@ -14,6 +14,11 @@ write_env_var() {
     printf '  %s: "%s",\n' "$key" "$(env_json_string "$value")"
 }
 
+integration_enabled=false
+case "$(printenv INTEGRATION_ENABLED 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)" in
+    1|true) integration_enabled=true ;;
+esac
+
 {
     printf 'window.__INFINITE_CANVAS_ENV__ = {\n'
     for key in \
@@ -29,6 +34,12 @@ write_env_var() {
         VITE_AI_API_KEY \
         VITE_AI_PLATFORM_ID \
         VITE_AI_MODELS \
+        VITE_SHOW_IMAGE_WORKBENCH \
+        VITE_SHOW_VIDEO_WORKBENCH \
+        VITE_SHOW_GITHUB \
+        VITE_SHOW_DOCS \
+        VITE_SHOW_CONFIG \
+        VITE_SHOW_SHORTCUTS \
         VITE_AI_TASK_TIMEOUT_MS \
         VITE_DEFAULT_IMAGE_MODEL \
         VITE_DEFAULT_VIDEO_MODEL \
@@ -45,6 +56,9 @@ write_env_var() {
         VITE_DEFAULT_AUDIO_FORMAT \
         VITE_DEFAULT_AUDIO_SPEED
     do
+        if [ "$integration_enabled" = true ] && { [ "$key" = VITE_AI_API_KEY ] || [ "$key" = VITE_AI_CHANNELS_JSON ]; }; then
+            continue
+        fi
         write_env_var "$key"
     done
     printf '};\n'

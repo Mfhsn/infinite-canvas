@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS integration_sessions (
+  session_id_hash CHAR(64) NOT NULL,
+  uid VARCHAR(255) NOT NULL,
+  username VARCHAR(255) NOT NULL,
+  nickname VARCHAR(255) NOT NULL,
+  permission_ids JSON NOT NULL,
+  current_points DECIMAL(20, 4) NULL,
+  local_project_id BIGINT NOT NULL,
+  external_project_id VARCHAR(255) NULL,
+  source_system VARCHAR(255) NULL,
+  external_token_ciphertext TEXT NULL,
+  refresh_token_ciphertext TEXT NULL,
+  local_token_ciphertext TEXT NOT NULL,
+  local_token_expires_at DATETIME(3) NOT NULL,
+  session_expires_at DATETIME(3) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (session_id_hash),
+  KEY idx_integration_sessions_expires_at (session_expires_at),
+  KEY idx_integration_sessions_identity (source_system, uid, local_project_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

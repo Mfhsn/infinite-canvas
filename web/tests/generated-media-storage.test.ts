@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { downloadBlobForStorage } from "@/services/file-storage";
+import { capturePlatformSessionBinding, clearPlatformSessionBinding } from "@/services/platform-session";
 import { resetStorageRuntimeForTests } from "@/services/storage/runtime";
 
 (globalThis as typeof globalThis & { __APP_VERSION__: string }).__APP_VERSION__ = "test";
@@ -11,12 +12,42 @@ const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document")
 
 afterEach(() => {
     globalThis.fetch = originalFetch;
+    clearPlatformSessionBinding();
     restoreGlobal("window", originalWindow);
     restoreGlobal("document", originalDocument);
     resetStorageRuntimeForTests();
 });
 
 describe("generated media persistence", () => {
+    test("sends the platform session binding when downloading same-origin generated media", async () => {
+        capturePlatformSessionBinding(new Response(null, { headers: { "X-Canvas-Session-Binding": "binding-media" } }));
+        let requestInit: RequestInit | undefined;
+        globalThis.fetch = (async (_input, init) => {
+            requestInit = init;
+            return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "Content-Type": "image/png" } });
+        }) as typeof fetch;
+
+        const blob = await downloadBlobForStorage("/__dream_media_proxy?url=generated");
+
+        expect(blob.type).toBe("image/png");
+        expect(requestInit?.credentials).toBe("include");
+        expect(new Headers(requestInit?.headers).get("X-Canvas-Session-Binding")).toBe("binding-media");
+    });
+
+    test("does not send the platform session binding to an external media URL", async () => {
+        capturePlatformSessionBinding(new Response(null, { headers: { "X-Canvas-Session-Binding": "binding-media" } }));
+        let requestInit: RequestInit | undefined;
+        globalThis.fetch = (async (_input, init) => {
+            requestInit = init;
+            return new Response(new Uint8Array([1]), { status: 200, headers: { "Content-Type": "image/png" } });
+        }) as typeof fetch;
+
+        await downloadBlobForStorage("https://cdn.example.test/generated.png");
+
+        expect(requestInit?.credentials).toBe("omit");
+        expect(requestInit?.headers).toBeUndefined();
+    });
+
     test("rejects failed remote downloads instead of storing an error response", async () => {
         globalThis.fetch = (async () => new Response("expired", { status: 403 })) as typeof fetch;
         await expect(downloadBlobForStorage("https://media.example.test/expired.mp4")).rejects.toThrow("Media download failed (403)");

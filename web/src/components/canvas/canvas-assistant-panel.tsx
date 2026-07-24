@@ -22,6 +22,7 @@ import { CanvasNodeType, type CanvasAssistantMessage, type CanvasAssistantRefere
 import { useCanvasAgentStore } from "@/stores/canvas/use-canvas-agent-store";
 import { summarizeCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { localizeError, localizeStoredError, storeError } from "@/lib/app-error";
+import { publicAssetPath } from "@/lib/app-base-path";
 import { useI18n } from "@/i18n/use-i18n";
 import type { I18nKey, I18nParams } from "@/i18n/messages";
 
@@ -702,12 +703,12 @@ function AgentModelIcon({ model }: { model: string }) {
 
 function resolveModelIcon(model: string) {
     const name = model.toLowerCase();
-    if (name.includes("claude") || name.includes("anthropic")) return "/icons/claude.svg";
-    if (name.includes("gemini") || name.includes("google")) return "/icons/gemini.svg";
-    if (name.includes("gpt") || name.includes("openai")) return "/icons/openai.svg";
-    if (name.includes("grok")) return "/icons/grok.svg";
-    if (name.includes("deepseek")) return "/icons/deepseek.svg";
-    if (name.includes("glm")) return "/icons/glm.svg";
+    if (name.includes("claude") || name.includes("anthropic")) return publicAssetPath("icons/claude.svg");
+    if (name.includes("gemini") || name.includes("google")) return publicAssetPath("icons/gemini.svg");
+    if (name.includes("gpt") || name.includes("openai")) return publicAssetPath("icons/openai.svg");
+    if (name.includes("grok")) return publicAssetPath("icons/grok.svg");
+    if (name.includes("deepseek")) return publicAssetPath("icons/deepseek.svg");
+    if (name.includes("glm")) return publicAssetPath("icons/glm.svg");
     return "";
 }
 

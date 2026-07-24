@@ -1,11 +1,18 @@
 import axios from "axios";
-import { describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 
 import { dreamApiProxyUrl, dreamMediaProxyUrl, isDreamMediaProxyTarget } from "@/services/api/dream-media";
+import { CANVAS_SESSION_BINDING_HEADER, capturePlatformSessionBinding, clearPlatformSessionBinding } from "@/services/platform-session";
 import type { AiConfig } from "@/stores/use-config-store";
 
 (globalThis as typeof globalThis & { __APP_VERSION__: string }).__APP_VERSION__ = "test";
 process.env.VITE_AI_PLATFORM_ID = "6";
+const { useUserStore } = await import("@/stores/use-user-store");
+
+afterEach(() => {
+    clearPlatformSessionBinding();
+    useUserStore.setState({ projectContext: null });
+});
 
 function configuredDreamConfig(defaultConfig: AiConfig, model = "doubao-seedream-4.5"): AiConfig {
     const channel = defaultConfig.channels[0];
@@ -88,6 +95,21 @@ describe("Dream image request", () => {
             expect(body).toMatchObject({ dream_image_req_key: "doubao-seedream-4.5", platform_id: 6, width: 2048, height: 2048, num_images: 1 });
             expect(options?.headers).toMatchObject({ Authorization: "Bearer access-token", "Content-Type": "application/json" });
             expect(images[0]?.dataUrl).toBe("https://example.test/image.png");
+        } finally {
+            post.mockRestore();
+        }
+    });
+
+    test("uses only the platform binding for Dream integration requests", async () => {
+        capturePlatformSessionBinding(new Response(null, { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding-1" } }));
+        const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, message: "ok", data: "https://example.test/image.png" } });
+        try {
+            const { requestDreamImageGeneration } = await import("@/services/api/dream");
+            const { defaultConfig } = await import("@/stores/use-config-store");
+            await requestDreamImageGeneration({ ...defaultConfig, apiKey: "", platformId: 6 }, "test", 1);
+
+            expect(post.mock.calls[0]?.[2]?.headers).toEqual({ "Content-Type": "application/json", [CANVAS_SESSION_BINDING_HEADER]: "binding-1" });
+            expect(post.mock.calls[0]?.[2]?.headers).not.toHaveProperty("Authorization");
         } finally {
             post.mockRestore();
         }
@@ -248,6 +270,21 @@ describe("Dream LLM request", () => {
         }
     });
 
+    test("accepts platform binding without an API key or Authorization header", async () => {
+        capturePlatformSessionBinding(new Response(null, { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding-llm" } }));
+        const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, data: { content: "ok" } } });
+        try {
+            const { requestDreamLlmChat } = await import("@/services/api/dream-llm");
+            const { defaultConfig } = await import("@/stores/use-config-store");
+            await requestDreamLlmChat({ ...defaultConfig, apiKey: "" }, [{ role: "user", content: "hello" }]);
+
+            expect(post.mock.calls[0]?.[2]?.headers).toEqual({ "Content-Type": "application/json", [CANVAS_SESSION_BINDING_HEADER]: "binding-llm" });
+            expect(post.mock.calls[0]?.[2]?.headers).not.toHaveProperty("Authorization");
+        } finally {
+            post.mockRestore();
+        }
+    });
+
     test("parses Doubao function-call markers and sends tool schemas through extra_params", async () => {
         const post = spyOn(axios, "post").mockResolvedValue({
             data: {
@@ -293,6 +330,12 @@ describe("Dream LLM request", () => {
 });
 
 describe("Dream video request", () => {
+    test("preserves explicit 2.0 reference mentions instead of appending every uploaded asset", async () => {
+        const { ensureSeedanceReferenceMentions } = await import("@/lib/seedance-video");
+
+        expect(ensureSeedanceReferenceMentions("让 @图片1 保持主体，参考背景运动", [{}], [{}], [{}])).toBe("让 @图片1 保持主体，参考背景运动");
+    });
+
     test("keeps the create response as a task ID instead of treating it as a URL", async () => {
         const post = spyOn(axios, "post")
             .mockResolvedValueOnce({ data: { id: "first-asset" } })
@@ -355,7 +398,7 @@ describe("Dream video request", () => {
                 image_asset_ids: ["image-asset"],
                 video_ids: ["video-asset"],
                 audio_ids: ["audio-asset"],
-                script_text: "animate subject",
+                script_text: "animate subject\n\n@图片1 @视频1 @音频1",
                 aspect_ratio: "21:9",
                 duration: 12,
                 audio: false,
@@ -365,6 +408,52 @@ describe("Dream video request", () => {
         } finally {
             post.mockRestore();
             URL.revokeObjectURL(videoUrl);
+        }
+    });
+
+    test("keeps empty multimodal lists and uses the active platform project for a 2.0 image-only reference", async () => {
+        useUserStore.setState({
+            projectContext: {
+                localProjectId: 42,
+                externalProjectId: "external-42",
+                sourceSystem: "platform",
+                expiresAt: "2026-07-24T00:00:00Z",
+            },
+        });
+        const post = spyOn(axios, "post")
+            .mockResolvedValueOnce({ data: { id: "image-asset" } })
+            .mockResolvedValueOnce({ data: { code: 0, message: "ok", data: "image-reference-task" } });
+        try {
+            const { createVideoGenerationTask } = await import("@/services/api/video");
+            const { defaultConfig } = await import("@/stores/use-config-store");
+            const config = {
+                ...configuredDreamConfig(defaultConfig, "doubao-seedance-2-0-260128"),
+                size: "1:1",
+                videoSeconds: "5",
+                videoMode: "subject",
+                videoGenerateAudio: "false",
+            };
+
+            const task = await createVideoGenerationTask(config, "做一个动效，人物从画面底部升起", [referenceImage]);
+
+            expect(task.id).toBe("image-reference-task");
+            expect(post.mock.calls[1]?.[1]).toMatchObject({
+                platform_id: 6,
+                project_id: 42,
+                action_type: "reference2video",
+                dream_video_req_key: "doubao-seedance-2-0-260128",
+                image_asset_ids: ["image-asset"],
+                video_ids: [],
+                audio_ids: [],
+                script_text: "做一个动效，人物从画面底部升起\n\n@图片1",
+                aspect_ratio: "1:1",
+                duration: 5,
+                audio: false,
+            });
+            expect(post.mock.calls[1]?.[1]).not.toHaveProperty("subjects");
+            expect(post.mock.calls[1]?.[1]).not.toHaveProperty("seed");
+        } finally {
+            post.mockRestore();
         }
     });
 
@@ -538,6 +627,28 @@ describe("Dream TTS request", () => {
             expect(blob).toBe(audio);
             expect(get.mock.calls[0]?.[0]).toBe("http://example.test/storage/speech.mp3");
             expect(get.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: "Bearer access-token" });
+        } finally {
+            post.mockRestore();
+            get.mockRestore();
+        }
+    });
+
+    test("uses platform binding for Dream media without browser Authorization", async () => {
+        capturePlatformSessionBinding(new Response(null, { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding-media" } }));
+        const audio = new Blob(["audio"], { type: "audio/mpeg" });
+        const post = spyOn(axios, "post").mockResolvedValue({ data: { audio_url: "/storage/speech.mp3" } });
+        const get = spyOn(axios, "get").mockResolvedValue({ data: audio });
+        try {
+            const { requestDreamAudioGeneration, requestDreamMediaBlob } = await import("@/services/api/dream");
+            const { defaultConfig } = await import("@/stores/use-config-store");
+            const config = { ...configuredDreamConfig(defaultConfig, "tts-synthesize"), apiKey: "" };
+            await requestDreamAudioGeneration(config, "hello");
+            await requestDreamMediaBlob(config, "/__dream_media_proxy?url=example");
+
+            expect(post.mock.calls[0]?.[2]?.headers).toEqual({ "Content-Type": "application/json", [CANVAS_SESSION_BINDING_HEADER]: "binding-media" });
+            expect(get.mock.calls[0]?.[1]?.headers).toEqual({ [CANVAS_SESSION_BINDING_HEADER]: "binding-media" });
+            expect(get.mock.calls[0]?.[1]?.headers).not.toHaveProperty("Authorization");
+            expect(get.mock.calls[1]?.[1]?.headers).toEqual({ [CANVAS_SESSION_BINDING_HEADER]: "binding-media" });
         } finally {
             post.mockRestore();
             get.mockRestore();

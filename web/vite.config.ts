@@ -8,7 +8,8 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type Connect, type Plugin } from "vite";
 
 import { parseChangelog } from "./src/lib/release";
-import { DREAM_API_PROXY_PATH, DREAM_MEDIA_PROXY_PATH, isDreamMediaProxyTarget } from "./src/services/api/dream-media";
+import { joinAppBasePath, normalizeAppBasePath } from "./src/lib/app-base-path-normalize";
+import { DREAM_API_PROXY_ROOT, DREAM_MEDIA_PROXY_ROOT, isDreamMediaProxyTarget } from "./src/services/api/dream-media-shared";
 
 const webDir = dirname(fileURLToPath(import.meta.url));
 const envDir = resolve(webDir, "..");
@@ -18,24 +19,34 @@ const MAX_DREAM_MEDIA_BYTES = 100 * 1024 * 1024;
 const DEFAULT_DREAM_PROXY_TIMEOUT_MS = 3 * 60 * 1000;
 const DEFAULT_DREAM_PROXY_CONNECT_TIMEOUT_MS = 30 * 1000;
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
     const env = loadEnv(mode, envDir, "");
     const storageDriver = env.DATA_STORAGE_DRIVER === "mysql" ? "mysql" : "browser";
     const storageApiTarget = env.STORAGE_API_URL || `http://127.0.0.1:${env.STORAGE_API_PORT || "3001"}`;
-    const storageProxy = storageDriver === "mysql" ? { "/api/storage": { target: storageApiTarget, changeOrigin: false } } : undefined;
+    const integrationEnabled = envFlag(env.INTEGRATION_ENABLED);
+    const appBasePath = normalizeAppBasePath(env.VITE_APP_BASE_PATH);
+    const stripBrowserSecrets = command === "build" || integrationEnabled;
+    const proxy = developmentProxyConfig(integrationEnabled, storageDriver, storageApiTarget, appBasePath);
     return {
+        base: appBasePath,
         envDir,
         plugins: [
             react(),
-            browserStorageConfigPlugin(storageDriver, env.STORAGE_NAMESPACE || "default"),
-            dreamApiProxyPlugin(
-                env.VITE_AI_BASE_URL,
-                env.VITE_AI_TLS_SERVER_NAME,
-                envFlag(env.VITE_AI_TLS_DISABLE_SNI),
-                envMilliseconds(env.VITE_AI_PROXY_TIMEOUT_MS, DEFAULT_DREAM_PROXY_TIMEOUT_MS),
-                envMilliseconds(env.VITE_AI_PROXY_CONNECT_TIMEOUT_MS, DEFAULT_DREAM_PROXY_CONNECT_TIMEOUT_MS),
-            ),
-            dreamMediaProxyPlugin(),
+            ...(integrationEnabled
+                ? []
+                : [
+                      platformConfigPlugin(false, appBasePath),
+                      browserStorageConfigPlugin(storageDriver, env.STORAGE_NAMESPACE || "default", appBasePath),
+                      dreamApiProxyPlugin(
+                          env.VITE_AI_BASE_URL,
+                          env.VITE_AI_TLS_SERVER_NAME,
+                          envFlag(env.VITE_AI_TLS_DISABLE_SNI),
+                          envMilliseconds(env.VITE_AI_PROXY_TIMEOUT_MS, DEFAULT_DREAM_PROXY_TIMEOUT_MS),
+                          envMilliseconds(env.VITE_AI_PROXY_CONNECT_TIMEOUT_MS, DEFAULT_DREAM_PROXY_CONNECT_TIMEOUT_MS),
+                          appBasePath,
+                      ),
+                      dreamMediaProxyPlugin(appBasePath),
+                  ]),
         ],
         resolve: {
             alias: {
@@ -45,20 +56,71 @@ export default defineConfig(({ mode }) => {
         define: {
             __APP_VERSION__: JSON.stringify(localVersion),
             __APP_RELEASES__: JSON.stringify(parseChangelog(localChangelog)),
+            ...integrationBrowserSecretDefines(stripBrowserSecrets),
         },
-        server: storageProxy ? { proxy: storageProxy } : undefined,
-        preview: storageProxy ? { proxy: storageProxy } : undefined,
+        server: proxy ? { proxy } : undefined,
+        preview: proxy ? { proxy } : undefined,
     };
 });
 
-function browserStorageConfigPlugin(driver: "browser" | "mysql", namespace: string): Plugin {
+export function integrationBrowserSecretDefines(integrationEnabled: boolean) {
+    return integrationEnabled
+        ? {
+              "import.meta.env.VITE_AI_API_KEY": JSON.stringify(""),
+              "import.meta.env.VITE_AI_CHANNELS_JSON": JSON.stringify(""),
+          }
+        : {};
+}
+
+export function developmentProxyConfig(integrationEnabled: boolean, storageDriver: "browser" | "mysql", storageApiTarget: string, appBasePath = "/") {
+    const route = (path: string) => joinAppBasePath(path, appBasePath);
+    if (integrationEnabled) {
+        return Object.fromEntries(
+            ["/api/platform", "/api/storage", DREAM_API_PROXY_ROOT, DREAM_MEDIA_PROXY_ROOT].map((path) => [route(path), { target: storageApiTarget, changeOrigin: false }]),
+        );
+    }
+    return storageDriver === "mysql" ? { [route("/api/storage")]: { target: storageApiTarget, changeOrigin: false } } : undefined;
+}
+
+function platformConfigPlugin(enabled: boolean, appBasePath: string): Plugin {
+    const configPath = joinAppBasePath("/api/platform/config", appBasePath);
+    const middleware: Connect.NextHandleFunction = (request, response, next) => {
+        const pathname = new URL(request.url || "/", "http://localhost").pathname;
+        if (pathname !== configPath) {
+            next();
+            return;
+        }
+        const body = platformConfigPayload(enabled);
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "application/json; charset=utf-8");
+        response.setHeader("Content-Length", String(Buffer.byteLength(body)));
+        response.end(body);
+    };
+    return {
+        name: "platform-config",
+        configureServer(server) {
+            server.middlewares.use(middleware);
+        },
+        configurePreviewServer(server) {
+            server.middlewares.use(middleware);
+        },
+    };
+}
+
+export function platformConfigPayload(enabled: boolean) {
+    return JSON.stringify({ enabled });
+}
+
+function browserStorageConfigPlugin(driver: "browser" | "mysql", namespace: string, appBasePath: string): Plugin {
+    const configPath = joinAppBasePath("/api/storage/config", appBasePath);
+    const healthPath = joinAppBasePath("/api/storage/health", appBasePath);
     const middleware: Connect.NextHandleFunction = (request, response, next) => {
         if (driver !== "browser") {
             next();
             return;
         }
         const pathname = new URL(request.url || "/", "http://localhost").pathname;
-        if (pathname !== "/api/storage/config" && pathname !== "/api/storage/health") {
+        if (pathname !== configPath && pathname !== healthPath) {
             next();
             return;
         }
@@ -79,7 +141,8 @@ function browserStorageConfigPlugin(driver: "browser" | "mysql", namespace: stri
     };
 }
 
-function dreamApiProxyPlugin(baseUrl: string | undefined, tlsServerName: string | undefined, disableSni: boolean, timeoutMs: number, connectTimeoutMs: number): Plugin {
+function dreamApiProxyPlugin(baseUrl: string | undefined, tlsServerName: string | undefined, disableSni: boolean, timeoutMs: number, connectTimeoutMs: number, appBasePath: string): Plugin {
+    const proxyPath = joinAppBasePath(DREAM_API_PROXY_ROOT, appBasePath);
     let upstream: URL | null = null;
     try {
         upstream = baseUrl?.trim() ? new URL(baseUrl) : null;
@@ -91,7 +154,7 @@ function dreamApiProxyPlugin(baseUrl: string | undefined, tlsServerName: string 
     const createConnection = upstream && tlsOptions ? dreamApiProxyConnection(upstream.hostname, Number(upstream.port) || 443, tlsOptions, connectTimeoutMs) : undefined;
     const middleware: Connect.NextHandleFunction = (request, response, next) => {
         const requestUrl = new URL(request.url || "/", "http://localhost");
-        if (!requestUrl.pathname.startsWith(`${DREAM_API_PROXY_PATH}/`)) {
+        if (!requestUrl.pathname.startsWith(`${proxyPath}/`)) {
             next();
             return;
         }
@@ -99,7 +162,7 @@ function dreamApiProxyPlugin(baseUrl: string | undefined, tlsServerName: string 
             sendDreamApiProxyError(response, 503, "Dream API proxy is not configured");
             return;
         }
-        const path = `${requestUrl.pathname.slice(DREAM_API_PROXY_PATH.length)}${requestUrl.search}`;
+        const path = `${requestUrl.pathname.slice(proxyPath.length)}${requestUrl.search}`;
         const headers = { ...request.headers, host: serverName, connection: "close", "accept-encoding": "identity" };
         const proxyRequest = https.request(
             {
@@ -219,10 +282,11 @@ function sendDreamApiProxyError(response: Parameters<Connect.NextHandleFunction>
     response.end(body);
 }
 
-function dreamMediaProxyPlugin(): Plugin {
+function dreamMediaProxyPlugin(appBasePath: string): Plugin {
+    const proxyPath = joinAppBasePath(DREAM_MEDIA_PROXY_ROOT, appBasePath);
     const middleware: Connect.NextHandleFunction = (request, response, next) => {
         const requestUrl = new URL(request.url || "/", "http://localhost");
-        if (requestUrl.pathname !== DREAM_MEDIA_PROXY_PATH) {
+        if (requestUrl.pathname !== proxyPath) {
             next();
             return;
         }

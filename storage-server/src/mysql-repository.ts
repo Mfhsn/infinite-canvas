@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import mysql, { type Pool, type ResultSetHeader, type RowDataPacket } from 'mysql2/promise';
-import type { BlobMetadata, BlobRepository, DocumentRecord, DocumentRepository, ServerConfig, StorageDomain, StorageRepositories } from './types.js';
+import type { BlobMetadata, BlobRepository, DocumentRecord, DocumentRepository, IntegrationSessionRecord, IntegrationSessionRepository, PlatformContext, ServerConfig, StorageDomain, StorageRepositories } from './types.js';
 
 interface DocumentRow extends RowDataPacket {
   domain: StorageDomain;
@@ -23,6 +23,28 @@ interface BlobMetaRow extends RowDataPacket {
 
 interface BlobContentRow extends RowDataPacket {
   content: Buffer;
+}
+
+interface MigrationRow extends RowDataPacket { version: string }
+interface AdvisoryLockRow extends RowDataPacket { acquired: number | string | null }
+
+interface IntegrationSessionRow extends RowDataPacket {
+  session_id_hash: string;
+  uid: string;
+  username: string;
+  nickname: string;
+  permission_ids: string | number[];
+  current_points: string | number | null;
+  local_project_id: string | number;
+  external_project_id: string | null;
+  source_system: string | null;
+  external_token_ciphertext: string | null;
+  refresh_token_ciphertext: string | null;
+  local_token_ciphertext: string;
+  local_token_expires_at: Date;
+  session_expires_at: Date;
+  created_at: Date;
+  updated_at: Date;
 }
 
 function dateIso(value: Date | string): string {
@@ -63,29 +85,190 @@ export async function createMysqlPool(config: ServerConfig): Promise<Pool> {
     ssl: config.mysql.ssl ? {} : undefined,
     namedPlaceholders: false,
   });
-  for (let attempt = 1; attempt <= config.mysql.connectAttempts; attempt += 1) {
-    try {
-      await pool.query('SELECT 1');
-      break;
-    } catch (error) {
-      if (attempt === config.mysql.connectAttempts) {
-        await pool.end();
-        throw error;
+  try {
+    for (let attempt = 1; attempt <= config.mysql.connectAttempts; attempt += 1) {
+      try {
+        await pool.query('SELECT 1');
+        break;
+      } catch (error) {
+        if (attempt === config.mysql.connectAttempts) throw error;
+        await new Promise((resolve) => setTimeout(resolve, config.mysql.connectRetryMs));
       }
-      await new Promise((resolve) => setTimeout(resolve, config.mysql.connectRetryMs));
     }
+    await migrate(pool);
+    return pool;
+  } catch (error) {
+    await pool.end().catch(() => undefined);
+    throw error;
   }
-  await migrate(pool);
-  return pool;
 }
 
 export async function migrate(pool: Pool): Promise<void> {
-  const migrationPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations', '001_init.sql');
-  const sql = await fs.readFile(migrationPath, 'utf8');
-  for (const statement of sql.split(';').map((part) => part.trim()).filter(Boolean)) {
-    await pool.query(statement);
+  const migrationDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
+  const connection = await pool.getConnection();
+  const lockName = 'infinite_canvas_schema_migrations';
+  let locked = false;
+  try {
+    const [lockRows] = await connection.query<AdvisoryLockRow[]>('SELECT GET_LOCK(?, 60) AS acquired', [lockName]);
+    locked = Number(lockRows[0]?.acquired) === 1;
+    if (!locked) throw new Error('Timed out waiting for the schema migration lock');
+    await connection.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+      version VARCHAR(64) PRIMARY KEY,
+      applied_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
+    const [rows] = await connection.query<MigrationRow[]>('SELECT version FROM schema_migrations');
+    const applied = new Set(rows.map((row) => row.version));
+    const files = (await fs.readdir(migrationDir)).filter((name) => /^\d+_[a-z0-9_-]+\.sql$/i.test(name)).sort();
+    for (const file of files) {
+      const version = file.slice(0, -4);
+      if (applied.has(version)) continue;
+      const sql = await fs.readFile(path.join(migrationDir, file), 'utf8');
+      for (const statement of sql.split(';').map((part) => part.trim()).filter(Boolean)) await connection.query(statement);
+      await connection.query('INSERT INTO schema_migrations (version) VALUES (?)', [version]);
+    }
+  } finally {
+    try {
+      if (locked) await connection.query('SELECT RELEASE_LOCK(?)', [lockName]);
+    } finally {
+      connection.release();
+    }
   }
-  await pool.query('INSERT IGNORE INTO schema_migrations (version) VALUES (?)', ['001_init']);
+}
+
+export class MysqlIntegrationSessionRepository implements IntegrationSessionRepository {
+  constructor(private readonly pool: Pool) {}
+
+  async get(sessionIdHash: string): Promise<IntegrationSessionRecord | null> {
+    const [rows] = await this.pool.query<IntegrationSessionRow[]>(
+      `SELECT session_id_hash, uid, username, nickname, permission_ids, current_points,
+        local_project_id, external_project_id, source_system, external_token_ciphertext,
+        refresh_token_ciphertext, local_token_ciphertext, local_token_expires_at,
+        session_expires_at, created_at, updated_at
+       FROM integration_sessions WHERE session_id_hash = ? LIMIT 1`,
+      [sessionIdHash],
+    );
+    const row = rows[0];
+    if (!row) return null;
+    const localProjectId = Number(row.local_project_id);
+    if (!Number.isSafeInteger(localProjectId) || !row.uid.trim() || !row.source_system?.trim()) {
+      await this.delete(sessionIdHash);
+      return null;
+    }
+    const permissionIds = typeof row.permission_ids === 'string' ? JSON.parse(row.permission_ids) : row.permission_ids;
+    const context: PlatformContext = {
+      authenticated: true,
+      uid: row.uid,
+      username: row.username,
+      nickname: row.nickname,
+      permissionIds: Array.isArray(permissionIds) ? permissionIds.map(Number).filter(Number.isSafeInteger) : [],
+      currentPoints: row.current_points === null ? null : Number(row.current_points),
+      localProjectId,
+      externalProjectId: row.external_project_id,
+      sourceSystem: row.source_system,
+      expiresAt: dateIso(row.local_token_expires_at),
+    };
+    return {
+      sessionIdHash: row.session_id_hash,
+      context,
+      externalTokenCiphertext: row.external_token_ciphertext,
+      refreshTokenCiphertext: row.refresh_token_ciphertext,
+      localTokenCiphertext: row.local_token_ciphertext,
+      sessionExpiresAt: dateIso(row.session_expires_at),
+      createdAt: dateIso(row.created_at),
+      updatedAt: dateIso(row.updated_at),
+    };
+  }
+
+  async save(record: IntegrationSessionRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO integration_sessions (
+        session_id_hash, uid, username, nickname, permission_ids, current_points,
+        local_project_id, external_project_id, source_system, external_token_ciphertext,
+        refresh_token_ciphertext, local_token_ciphertext, local_token_expires_at,
+        session_expires_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE username = VALUES(username), nickname = VALUES(nickname),
+        permission_ids = VALUES(permission_ids), current_points = VALUES(current_points),
+        local_project_id = VALUES(local_project_id), external_project_id = VALUES(external_project_id),
+        source_system = VALUES(source_system), external_token_ciphertext = VALUES(external_token_ciphertext),
+        refresh_token_ciphertext = VALUES(refresh_token_ciphertext), local_token_ciphertext = VALUES(local_token_ciphertext),
+        local_token_expires_at = VALUES(local_token_expires_at), session_expires_at = VALUES(session_expires_at),
+        updated_at = VALUES(updated_at)`,
+      sessionRecordParams(record),
+    );
+  }
+
+  async updateExisting(record: IntegrationSessionRecord): Promise<boolean> {
+    const [result] = await this.pool.query<ResultSetHeader>(
+      `UPDATE integration_sessions SET
+        uid = ?, username = ?, nickname = ?, permission_ids = CAST(? AS JSON), current_points = ?,
+        local_project_id = ?, external_project_id = ?, source_system = ?, external_token_ciphertext = ?,
+        refresh_token_ciphertext = ?, local_token_ciphertext = ?, local_token_expires_at = ?,
+        session_expires_at = ?, created_at = ?, updated_at = ?
+       WHERE session_id_hash = ?`,
+      [
+        record.context.uid, record.context.username, record.context.nickname, JSON.stringify(record.context.permissionIds),
+        record.context.currentPoints, record.context.localProjectId, record.context.externalProjectId,
+        record.context.sourceSystem, record.externalTokenCiphertext, record.refreshTokenCiphertext,
+        record.localTokenCiphertext, new Date(record.context.expiresAt), new Date(record.sessionExpiresAt),
+        new Date(record.createdAt), new Date(record.updatedAt), record.sessionIdHash,
+      ],
+    );
+    return result.affectedRows === 1;
+  }
+
+  async replace(sessionIdHash: string, replacement: IntegrationSessionRecord): Promise<boolean> {
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.query<RowDataPacket[]>(
+        'SELECT session_id_hash FROM integration_sessions WHERE session_id_hash = ? FOR UPDATE',
+        [sessionIdHash],
+      );
+      if (!rows.length) {
+        await connection.rollback();
+        return false;
+      }
+      await connection.query(
+        `INSERT INTO integration_sessions (
+          session_id_hash, uid, username, nickname, permission_ids, current_points,
+          local_project_id, external_project_id, source_system, external_token_ciphertext,
+          refresh_token_ciphertext, local_token_ciphertext, local_token_expires_at,
+          session_expires_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, CAST(? AS JSON), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        sessionRecordParams(replacement),
+      );
+      const [deleted] = await connection.query<ResultSetHeader>(
+        'DELETE FROM integration_sessions WHERE session_id_hash = ?',
+        [sessionIdHash],
+      );
+      if (deleted.affectedRows !== 1) {
+        await connection.rollback();
+        return false;
+      }
+      await connection.commit();
+      return true;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  async delete(sessionIdHash: string): Promise<void> {
+    await this.pool.query('DELETE FROM integration_sessions WHERE session_id_hash = ?', [sessionIdHash]);
+  }
+}
+
+function sessionRecordParams(record: IntegrationSessionRecord): unknown[] {
+  return [
+    record.sessionIdHash, record.context.uid, record.context.username, record.context.nickname,
+    JSON.stringify(record.context.permissionIds), record.context.currentPoints, record.context.localProjectId,
+    record.context.externalProjectId, record.context.sourceSystem, record.externalTokenCiphertext,
+    record.refreshTokenCiphertext, record.localTokenCiphertext, new Date(record.context.expiresAt),
+    new Date(record.sessionExpiresAt), new Date(record.createdAt), new Date(record.updatedAt),
+  ];
 }
 
 export class MysqlDocumentRepository implements DocumentRepository {

@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
-import { createGenerationAwarePersistStorage } from "@/lib/localforage-storage";
+import {
+    beginWorkspaceSwitch,
+    completeWorkspaceSwitch,
+    createDataStateStorage,
+    createGenerationAwarePersistStorage,
+    getWorkspaceWriteGateState,
+    resetWorkspaceWriteGateForTests,
+    type WorkspaceAwareStateStorage,
+} from "@/lib/localforage-storage";
 import { useCanvasFolderStore } from "@/stores/canvas/use-canvas-folder-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import type { StateStorage } from "zustand/middleware";
@@ -83,5 +91,66 @@ describe("canvas library stores", () => {
         await expect(storage.flush()).rejects.toThrow("offline");
         await storage.retryWrite();
         expect(writes).toEqual([JSON.stringify(value)]);
+    });
+
+    test("flushes writes accepted before a workspace switch and drops writes made during it", async () => {
+        resetWorkspaceWriteGateForTests();
+        const writes: Array<{ value: string; epoch: number }> = [];
+        const base: WorkspaceAwareStateStorage = {
+            getItem: async () => null,
+            setItem: async () => undefined,
+            setItemForWorkspace: async (_name, value, epoch) => {
+                writes.push({ value, epoch });
+                return true;
+            },
+            removeItem: async () => undefined,
+            flush: async () => undefined,
+        };
+        const storage = createGenerationAwarePersistStorage<{ value: string }>(base, { debounceMs: 60_000, getGeneration: () => 1 });
+
+        storage.persist.setItem("state", { state: { value: "accepted" }, version: 0 });
+        beginWorkspaceSwitch();
+        storage.persist.setItem("state", { state: { value: "dropped" }, version: 0 });
+        await storage.flush();
+        completeWorkspaceSwitch();
+        storage.persist.setItem("state", { state: { value: "resumed" }, version: 0 });
+        await storage.flush();
+
+        expect(writes.map((write) => JSON.parse(write.value).state.value)).toEqual(["accepted", "resumed"]);
+        expect(writes.map((write) => write.epoch)).toEqual([0, 1]);
+        expect(getWorkspaceWriteGateState()).toEqual({ epoch: 1, paused: false });
+    });
+
+    test("discards a queued data write after the workspace epoch advances", async () => {
+        resetWorkspaceWriteGateForTests();
+        const storage = createDataStateStorage("assets") as WorkspaceAwareStateStorage;
+        const pending = storage.setItemForWorkspace("state", JSON.stringify({ state: { assets: [] }, version: 0 }), 0);
+        beginWorkspaceSwitch();
+        completeWorkspaceSwitch();
+
+        expect(await pending).toBe(false);
+        expect(getWorkspaceWriteGateState()).toEqual({ epoch: 1, paused: false });
+    });
+
+    test("clears pending write status when an accepted snapshot becomes stale", async () => {
+        resetWorkspaceWriteGateForTests();
+        const statuses: string[] = [];
+        const base: WorkspaceAwareStateStorage = {
+            getItem: async () => null,
+            setItem: async () => undefined,
+            setItemForWorkspace: async () => false,
+            removeItem: async () => undefined,
+            flush: async () => undefined,
+        };
+        const storage = createGenerationAwarePersistStorage<{ value: string }>(base, {
+            debounceMs: 60_000,
+            getGeneration: () => 1,
+            onWriteState: (status) => statuses.push(status),
+        });
+
+        storage.persist.setItem("state", { state: { value: "stale" }, version: 0 });
+        await storage.flush();
+
+        expect(statuses.at(-1)).toBe("success");
     });
 });

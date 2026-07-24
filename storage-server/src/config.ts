@@ -17,6 +17,22 @@ function boolEnv(env: NodeJS.ProcessEnv, name: string): boolean {
   return raw === '1' || raw?.toLowerCase() === 'true';
 }
 
+function boolEnvDefault(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean {
+  return env[name] === undefined ? fallback : boolEnv(env, name);
+}
+
+function appBasePathEnv(value: string | undefined): string {
+  const raw = value?.trim() || '/';
+  if (!raw.startsWith('/') || raw.includes('?') || raw.includes('#') || raw.includes('\\')) {
+    throw new Error('VITE_APP_BASE_PATH must be an absolute URL path');
+  }
+  const segments = raw.split('/').filter(Boolean);
+  if (segments.some((segment) => segment === '.' || segment === '..')) {
+    throw new Error('VITE_APP_BASE_PATH cannot contain relative path segments');
+  }
+  return segments.length ? `/${segments.join('/')}/` : '/';
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
   const requested = (env.DATA_STORAGE_DRIVER ?? 'browser').trim().toLowerCase();
   if (requested !== 'browser' && requested !== 'mysql') throw new Error('DATA_STORAGE_DRIVER must be browser or mysql');
@@ -28,6 +44,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     namespace: env.STORAGE_NAMESPACE || 'default',
     port: Number.parseInt(env.STORAGE_API_PORT ?? env.PORT ?? '3001', 10) || 3001,
     staticDir: path.resolve(env.STATIC_DIR || defaultStaticDir),
+    appBasePath: appBasePathEnv(env.VITE_APP_BASE_PATH),
     maxFileBytes: Math.max(1, Number.isFinite(maxFileMb) ? maxFileMb : 128) * 1024 * 1024,
     maxDocumentBytes: Math.max(1, Number.isFinite(maxDocumentMb) ? maxDocumentMb : 16) * 1024 * 1024,
     dreamProxy: {
@@ -35,6 +52,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       tlsServerName: env.VITE_AI_TLS_SERVER_NAME?.trim() || '',
       disableSni: boolEnv(env, 'VITE_AI_TLS_DISABLE_SNI'),
       timeoutMs: intEnv(env, 'VITE_AI_PROXY_TIMEOUT_MS', 3 * 60 * 1000, 1000),
+    },
+    integration: {
+      enabled: boolEnv(env, 'INTEGRATION_ENABLED'),
+      baseUrl: env.INTEGRATION_BASE_URL?.trim() || '',
+      tlsServerName: env.INTEGRATION_TLS_SERVER_NAME?.trim() || '',
+      disableSni: boolEnv(env, 'INTEGRATION_TLS_DISABLE_SNI'),
+      externalProjectId: env.INTEGRATION_EXTERNAL_PROJECT_ID?.trim() || '',
+      sourceSystem: env.INTEGRATION_SOURCE_SYSTEM?.trim() || '',
+      sessionSecret: env.INTEGRATION_SESSION_SECRET || '',
+      cookieName: env.INTEGRATION_COOKIE_NAME?.trim() || 'infinite_canvas_session',
+      cookieSecure: boolEnvDefault(env, 'INTEGRATION_COOKIE_SECURE', env.NODE_ENV === 'production'),
+      sessionTtlSeconds: intEnv(env, 'INTEGRATION_SESSION_TTL_SECONDS', 86_400, 60),
+      connectTimeoutMs: intEnv(env, 'INTEGRATION_CONNECT_TIMEOUT_MS', 30_000, 100),
+      requestTimeoutMs: intEnv(env, 'INTEGRATION_REQUEST_TIMEOUT_MS', 180_000, 1000),
     },
     mysql: {
       host: env.MYSQL_HOST || '127.0.0.1',

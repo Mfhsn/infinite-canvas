@@ -28,6 +28,7 @@ type AssetBase<T extends AssetKind> = {
 type AssetStore = {
     hydrated: boolean;
     assets: Asset[];
+    flush: () => Promise<void>;
     addAsset: (asset: Omit<Asset, "id" | "createdAt" | "updatedAt">) => string;
     updateAsset: (id: string, patch: Partial<Omit<Asset, "id" | "createdAt">>) => void;
     removeAsset: (id: string) => void;
@@ -41,7 +42,7 @@ const dataStateStorage = createDataStateStorage("assets");
 const assetStorage: PersistStorage<AssetStore> = {
     getItem: async (name) => {
         const value = await dataStateStorage.getItem(name);
-        if (!value) return null;
+        if (!value) return { state: { assets: [] } as unknown as StorageValue<AssetStore>["state"], version: 0 };
         const parsed = JSON.parse(value) as StorageValue<AssetStore>;
         parsed.state.assets = await Promise.all(
             parsed.state.assets.map(async (asset) => {
@@ -69,6 +70,7 @@ export const useAssetStore = create<AssetStore>()(
         (set, get) => ({
             hydrated: false,
             assets: [],
+            flush: () => dataStateStorage.flush(),
             addAsset: (asset) => {
                 const now = new Date().toISOString();
                 const id = nanoid();
@@ -97,6 +99,7 @@ export const useAssetStore = create<AssetStore>()(
         {
             name: ASSET_STORE_KEY,
             storage: assetStorage,
+            skipHydration: true,
             partialize: (state) => ({ assets: state.assets }) as StorageValue<AssetStore>["state"],
             onRehydrateStorage: () => () => {
                 useAssetStore.setState({ hydrated: true });

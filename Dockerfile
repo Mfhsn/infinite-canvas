@@ -9,7 +9,17 @@ RUN --mount=type=cache,target=/root/.bun/install/cache bun install --cache-dir=/
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./
-RUN --mount=type=secret,id=app_env,target=/app/.env,required=false bun run build
+RUN --mount=type=secret,id=app_env,target=/run/secrets/app_env,required=false \
+    sh -eu -c '\
+      if [ -f /run/secrets/app_env ]; then \
+        if grep -Eiq "^INTEGRATION_ENABLED=(1|true)[[:space:]]*$" /run/secrets/app_env; then \
+          grep -Ev "^(VITE_AI_API_KEY|VITE_AI_CHANNELS_JSON)=" /run/secrets/app_env > /app/.env; \
+        else \
+          cp /run/secrets/app_env /app/.env; \
+        fi; \
+      fi; \
+      bun run build; \
+      rm -f /app/.env'
 
 # Compile the same-origin storage API and retain production dependencies only.
 FROM node:20-alpine AS storage-build

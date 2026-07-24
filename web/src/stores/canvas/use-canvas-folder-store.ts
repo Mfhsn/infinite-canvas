@@ -98,6 +98,7 @@ export const useCanvasFolderStore = create<CanvasFolderStore>()(
         {
             name: CANVAS_FOLDER_STORE_KEY,
             storage: folderStorage.persist,
+            skipHydration: true,
             partialize: (state) => ({ folders: state.folders }) as StorageValue<CanvasFolderStore>["state"],
             onRehydrateStorage: () => (_state, error) => {
                 useCanvasFolderStore.setState({

@@ -3,6 +3,7 @@ import axios from "axios";
 import { ENV_AI_LLM_PLATFORM_CODE, ENV_AI_LLM_URL } from "@/constant/env";
 import { AppError, requestError } from "@/lib/app-error";
 import { DREAM_API_PROXY_PATH } from "@/services/api/dream-media";
+import { hasPlatformSessionBinding, platformSessionBindingHeaders } from "@/services/platform-session";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import type { ResponseFunctionTool, ResponseInputMessage, ResponseToolCall, ToolChoice, ToolResponseResult } from "@/services/api/image";
@@ -18,7 +19,7 @@ type DreamLlmEnvelope = {
 
 export async function requestDreamLlmChat(config: AiConfig, messages: ResponseInputMessage[], options?: RequestOptions) {
     const apiKey = config.apiKey.trim();
-    if (!apiKey) throw new AppError("error.dream.authRequired");
+    if (!hasPlatformSessionBinding() && !apiKey) throw new AppError("error.dream.authRequired");
     const response = await axios.post<DreamLlmEnvelope>(
         dreamLlmApiUrl(),
         {
@@ -30,7 +31,7 @@ export async function requestDreamLlmChat(config: AiConfig, messages: ResponseIn
         },
         {
             headers: {
-                Authorization: `Bearer ${apiKey}`,
+                ...(hasPlatformSessionBinding() ? platformSessionBindingHeaders() : { Authorization: `Bearer ${apiKey}` }),
                 "Content-Type": "application/json",
             },
             signal: options?.signal,
