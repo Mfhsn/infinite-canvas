@@ -151,19 +151,26 @@ test('Integration client preserves safe upstream permission and validation statu
 test('Integration client exposes only the upstream status for unexpected failures', async () => {
   const upstream = http.createServer((_request, response) => {
     response.writeHead(500, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ detail: 'token and database internals must stay private', request_token: 'secret' }));
+    response.end(JSON.stringify({ detail: 'database rejected external-secret', request_token: 'secret' }));
   });
   await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
   const port = upstream.address().port;
   const client = new HttpIntegrationClient(integrationConfig({ baseUrl: `http://127.0.0.1:${port}` }));
+  const logged = [];
+  const originalConsoleError = console.error;
+  console.error = (...args) => logged.push(args);
   try {
     await assert.rejects(client.exchange('external-secret', 'project-1'), (error) => error.status === 502
       && error.code === 'integration_error'
       && error.message === 'Platform request failed (upstream 500)'
       && !error.message.includes('secret'));
   } finally {
+    console.error = originalConsoleError;
     await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
   }
+  const rejectedLog = logged.find(([message]) => message === '[integration] upstream response rejected');
+  assert.equal(rejectedLog?.[1]?.detail, 'database rejected [redacted]');
+  assert.equal(JSON.stringify(logged).includes('external-secret'), false);
 });
 
 test('document API supports CRUD and optimistic locking', async () => {
@@ -296,6 +303,17 @@ test('blob API supports raw upload, HEAD, range, list and size limit', async () 
     assert.equal(response.headers.get('content-length'), '3');
     assert.equal(contentReads.length, 0);
 
+    const logged = [];
+    const originalConsoleError = console.error;
+    console.error = (...args) => logged.push(args);
+    try {
+      response = await fetch(`${base}/api/storage/blobs/missing-cover`, { method: 'HEAD' });
+    } finally {
+      console.error = originalConsoleError;
+    }
+    assert.equal(response.status, 404);
+    assert.equal(logged.length, 0);
+
     response = await fetch(`${base}/api/storage/blobs/img-1`, { headers: { range: 'bytes=1-2' } });
     assert.equal(response.status, 206);
     assert.equal(response.headers.get('content-range'), 'bytes 1-2/3');
@@ -427,6 +445,7 @@ test('Dream proxy rejects requests when no upstream is configured', async () => 
 
 test('platform login, exchange, context and logout keep all upstream tokens server-side', async () => {
   const captured = [];
+  let profilePoints = 88;
   const upstream = http.createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
@@ -445,14 +464,16 @@ test('platform login, exchange, context and logout keep all upstream tokens serv
     } else if (request.url === '/api/integration/session/exchange') {
       payload = { data: {
         local_token: 'local-secret', uid: '42', username: 'alice', nickname: 'Alice',
-        permission_ids: [2, 9], current_points: 88, local_project_id: 101,
+        permission_ids: [2, 9], current_points: 0, local_project_id: 101,
         external_project_id: 'project-x', source_system: 'apifox',
         expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       } };
+    } else if (request.url === '/api/integration/external/profile') {
+      payload = { data: { id: '42', username: 'alice', nickname: 'Alice', points: profilePoints } };
     } else if (request.url === '/api/integration/context/current') {
       payload = { data: {
         uid: '42', username: 'alice', nickname: 'Alice Updated', permission_ids: [2, 9],
-        current_points: 77, local_project_id: 101, external_project_id: 'project-x',
+        current_points: 0, local_project_id: 101, external_project_id: 'project-x',
         source_system: 'apifox', expires_at: new Date(Date.now() + 20 * 60 * 1000).toISOString(),
       } };
     } else if (request.url === '/api/integration/external/auth/logout') {
@@ -505,6 +526,7 @@ test('platform login, exchange, context and logout keep all upstream tokens serv
       assert.match(binding, /^[A-Za-z0-9_-]{43}$/);
       const context = await response.json();
       assert.equal(context.uid, '42');
+      assert.equal(context.currentPoints, 88);
       assert.equal(context.localToken, undefined);
       assert.equal(JSON.stringify(context).includes('secret'), false);
 
@@ -515,6 +537,7 @@ test('platform login, exchange, context and logout keep all upstream tokens serv
       const persistedJson = JSON.stringify(persisted);
       for (const token of ['external-secret', 'refresh-secret', 'local-secret']) assert.equal(persistedJson.includes(token), false);
 
+      profilePoints = 77;
       response = await fetch(`${base}/api/platform/context`, { headers: { cookie, 'x-canvas-session-binding': binding } });
       assert.equal(response.status, 200);
       assert.equal(response.headers.get('cache-control'), 'no-store');
@@ -540,7 +563,9 @@ test('platform login, exchange, context and logout keep all upstream tokens serv
     { method: 'POST', url: '/api/integration/external/auth/login' },
     { method: 'GET', url: '/api/integration/external/projects' },
     { method: 'POST', url: '/api/integration/session/exchange' },
+    { method: 'GET', url: '/api/integration/external/profile' },
     { method: 'GET', url: '/api/integration/context/current' },
+    { method: 'GET', url: '/api/integration/external/profile' },
     { method: 'POST', url: '/api/integration/external/auth/logout' },
   ]);
   assert.equal(captured[1].externalToken, 'external-secret');
@@ -551,8 +576,12 @@ test('platform login, exchange, context and logout keep all upstream tokens serv
     external_token: 'external-secret',
     external_project_id: 'project-x',
   });
-  assert.equal(captured[3].authorization, 'Bearer local-secret');
-  assert.equal(captured[4].externalToken, 'external-secret');
+  assert.equal(captured[3].externalToken, 'external-secret');
+  assert.equal(captured[3].authorization, undefined);
+  assert.equal(captured[4].authorization, 'Bearer local-secret');
+  assert.equal(captured[5].externalToken, 'external-secret');
+  assert.equal(captured[5].authorization, undefined);
+  assert.equal(captured[6].externalToken, 'external-secret');
 });
 
 test('registration and platform project routes enforce binding, keep tokens server-side and rotate selection atomically', async () => {
@@ -590,6 +619,9 @@ test('registration and platform project routes enforce binding, keep tokens serv
       return send(200, { data: projects });
     }
     if (request.url === '/api/integration/external/projects/create') return send(200, { data: null });
+    if (request.url === '/api/integration/external/profile') {
+      return send(200, { data: { id: 'project-user', username: 'project-user', nickname: 'Project User', points: 500 } });
+    }
     if (request.url === '/api/integration/session/exchange') {
       if (body.external_project_id === 'project-3') return send(422, { detail: 'selection rejected' });
       const selected = String(body.external_project_id);
@@ -920,6 +952,8 @@ test('host-platform bootstrap rotates credentials once and reuses an equivalent 
   const config = integrationConfig();
   const context = platformContext('rotate-user', 44);
   let exchanges = 0;
+  let currentReads = 0;
+  let refreshedPoints = context.currentPoints;
   const captured = [];
   const client = {
     exchange: async (externalToken, externalProjectId) => {
@@ -927,7 +961,10 @@ test('host-platform bootstrap rotates credentials once and reuses an equivalent 
       captured.push({ externalToken, externalProjectId });
       return { context, localToken: 'local-rotate' };
     },
-    current: async () => context,
+    current: async () => {
+      currentReads += 1;
+      return { ...context, currentPoints: refreshedPoints };
+    },
     logout: async () => {},
   };
   const sessions = new IntegrationSessionService(config, new MemoryIntegrationSessionRepository());
@@ -948,6 +985,7 @@ test('host-platform bootstrap rotates credentials once and reuses an equivalent 
     const oldCookie = initial.cookie;
     const oldBinding = initial.binding;
 
+    refreshedPoints = 5;
     response = await fetch(`${base}/api/platform/session/bootstrap`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', cookie: oldCookie },
@@ -980,9 +1018,11 @@ test('host-platform bootstrap rotates credentials once and reuses an equivalent 
       body: JSON.stringify({ external_token: 'external-rotate', refresh_token: 'refresh-rotate', external_project_id: 'external-44' }),
     });
     assert.equal(response.status, 200);
+    assert.equal((await response.clone().json()).currentPoints, refreshedPoints);
     assert.equal(response.headers.get('set-cookie'), null);
     assert.equal(bindingFrom(response), newBinding);
     assert.equal(exchanges, 1);
+    assert.equal(currentReads, 2);
 
     response = await fetch(`${base}/api/platform/session/clear`, {
       method: 'POST', headers: { cookie: newCookie },

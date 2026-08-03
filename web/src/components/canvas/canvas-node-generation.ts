@@ -40,6 +40,10 @@ export type CanvasStartEndFrameSelection = {
 export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, options: NodeGenerationOptions = {}): NodeGenerationContext {
     const inputs = buildNodeGenerationInputs(nodeId, nodes, connections);
     const sourceNode = nodes.find((node) => node.id === nodeId);
+    return buildNodeGenerationContextFromInputs(sourceNode, inputs, prompt, options);
+}
+
+export function buildNodeGenerationContextFromInputs(sourceNode: CanvasNodeData | undefined, inputs: NodeGenerationInput[], prompt: string, options: NodeGenerationOptions = {}): NodeGenerationContext {
     let context: NodeGenerationContext;
     if (sourceNode?.type === CanvasNodeType.Config && Boolean(sourceNode.metadata?.composerContent?.trim())) {
         context = buildComposerGenerationContext(inputs, prompt, Boolean(options.includeAllMediaReferences));

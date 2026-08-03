@@ -14,6 +14,9 @@ export const SEEDANCE_REFERENCE_LIMITS = {
 
 export const DREAM_SEEDANCE_15_MODEL = "doubao-seedance-1-5-pro-251215";
 export const DREAM_SEEDANCE_20_MODEL = "doubao-seedance-2-0-260128";
+export const DREAM_SEEDANCE_20_FAST_MODEL = "doubao-seedance-2-0-fast-260128";
+export const DREAM_SEEDANCE_20_MINI_MODEL = "doubao-seedance-2-0-mini-260615";
+export const DREAM_SEEDANCE_20_MODELS = [DREAM_SEEDANCE_20_MODEL, DREAM_SEEDANCE_20_FAST_MODEL, DREAM_SEEDANCE_20_MINI_MODEL] as const;
 export type DreamVideoMode = "start-end" | "subject";
 
 export const seedanceResolutionOptions = [
@@ -41,11 +44,16 @@ export function isBuiltInDreamVideoConfig(config: AiConfig) {
 }
 
 export function isDreamSeedanceModel(model: string) {
-    return model === DREAM_SEEDANCE_15_MODEL || model === DREAM_SEEDANCE_20_MODEL;
+    const normalized = modelOptionName(model);
+    return normalized === DREAM_SEEDANCE_15_MODEL || isDreamSeedance20Model(normalized);
+}
+
+export function isDreamSeedance15Model(model: string) {
+    return modelOptionName(model) === DREAM_SEEDANCE_15_MODEL;
 }
 
 export function isDreamSeedance20Model(model: string) {
-    return model === DREAM_SEEDANCE_20_MODEL;
+    return DREAM_SEEDANCE_20_MODELS.includes(modelOptionName(model) as (typeof DREAM_SEEDANCE_20_MODELS)[number]);
 }
 
 export function dreamVideoModes(model: string): DreamVideoMode[] {

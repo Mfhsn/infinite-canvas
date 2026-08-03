@@ -51,7 +51,7 @@ export async function createStorageServer(ctx?: Partial<RouteContext>, options: 
       await serveStatic(req, res, config.staticDir, config.appBasePath);
     } catch (error) {
       const path = new URL(req.url ?? '/', 'http://localhost').pathname;
-      if (path.startsWith('/api/platform/') || path.startsWith('/api/storage/')) {
+      if ((path.startsWith('/api/platform/') || path.startsWith('/api/storage/')) && shouldLogApiFailure(req.method, path, error)) {
         console.error('[canvas-api] request failed', {
           method: req.method,
           path,
@@ -67,6 +67,16 @@ export async function createStorageServer(ctx?: Partial<RouteContext>, options: 
   });
   if (config.driver === 'mysql' && deferMysql && !repos) void initializeMysqlInBackground(config, routeContext);
   return server;
+}
+
+function shouldLogApiFailure(method: string | undefined, path: string, error: unknown): boolean {
+  return !(
+    method === 'HEAD'
+    && path.startsWith('/api/storage/blobs/')
+    && error instanceof HttpError
+    && error.status === 404
+    && error.code === 'not_found'
+  );
 }
 
 function stripAppBasePath(requestUrl: string | undefined, appBasePath: string): string | undefined {

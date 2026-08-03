@@ -11,7 +11,7 @@ describe("built-in AI channel defaults", () => {
     test("uses only the API example channel and its documented defaults", async () => {
         const { defaultConfig, DREAM_API_MODELS, DREAM_IMAGE_MODELS, DREAM_TEXT_MODELS, DREAM_VIDEO_MODELS, modelOptionName, resolveModelRequestConfig, useConfigStore } = await import("@/stores/use-config-store");
         expect(DREAM_IMAGE_MODELS).toEqual(["doubao-seedream-4.5", "doubao-seedream-5-0-260128"]);
-        expect(DREAM_VIDEO_MODELS).toEqual(["doubao-seedance-1-5-pro-251215", "doubao-seedance-2-0-260128"]);
+        expect(DREAM_VIDEO_MODELS).toEqual(["doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-mini-260615"]);
         expect(DREAM_TEXT_MODELS).toEqual(["doubao-1.5-pro"]);
         expect(DREAM_API_MODELS).toEqual([...DREAM_IMAGE_MODELS, ...DREAM_VIDEO_MODELS, ...DREAM_TEXT_MODELS, "tts-synthesize"]);
         expect(defaultConfig.channels).toHaveLength(1);
@@ -33,7 +33,7 @@ describe("built-in AI channel defaults", () => {
         expect(modelOptionName(defaultConfig.imageModel)).toBe("doubao-seedream-4.5");
         expect(defaultConfig.quality).toBe("2k");
         expect(defaultConfig.size).toBe("1:1");
-        expect(modelOptionName(defaultConfig.videoModel)).toBe("doubao-seedance-1-5-pro-251215");
+        expect(modelOptionName(defaultConfig.videoModel)).toBe("doubao-seedance-2-0-260128");
         expect(defaultConfig.videoMode).toBe("start-end");
         expect(defaultConfig.videoSeed).toBe("-1");
         expect(defaultConfig.videoGenerateAudio).toBe("false");
@@ -44,10 +44,10 @@ describe("built-in AI channel defaults", () => {
 
     test("uses model-specific canvas video input modes", async () => {
         const { defaultDreamVideoMode, dreamVideoModes } = await import("@/lib/seedance-video");
-        expect(defaultDreamVideoMode("doubao-seedance-1-5-pro-251215")).toBe("start-end");
-        expect(dreamVideoModes("doubao-seedance-1-5-pro-251215")).toEqual(["start-end"]);
-        expect(defaultDreamVideoMode("doubao-seedance-2-0-260128")).toBe("subject");
-        expect(dreamVideoModes("doubao-seedance-2-0-260128")).toEqual(["start-end", "subject"]);
+        for (const model of ["doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-mini-260615"]) {
+            expect(defaultDreamVideoMode(model)).toBe("subject");
+            expect(dreamVideoModes(model)).toEqual(["start-end", "subject"]);
+        }
     });
 
     test("removes legacy browser credentials when Integration is enabled", async () => {

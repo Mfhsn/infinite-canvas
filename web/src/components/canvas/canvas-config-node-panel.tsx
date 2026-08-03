@@ -1,13 +1,15 @@
 import type { CSSProperties } from "react";
-import { Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, Settings2, Square, Video } from "lucide-react";
+import { Image as ImageIcon, LoaderCircle, MessageSquare, Music2, Play, RefreshCw, Settings2, Square, Video } from "lucide-react";
 import { Button, Segmented } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { CreditSymbol, requestCreditCost } from "@/constant/credits";
+import { CreditSymbol } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useI18n } from "@/i18n/use-i18n";
+import { localizeError } from "@/lib/app-error";
+import { useCanvasGenerationPointsEstimate } from "@/hooks/use-generation-points-estimate";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
@@ -21,7 +23,7 @@ type CanvasConfigNodePanelProps = {
     isRunning: boolean;
     inputs: NodeGenerationInput[];
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
-    onGenerate: (nodeId: string) => void;
+    onGenerate: (nodeId: string) => void | Promise<void>;
     onStop: (nodeId: string) => void;
     onComposerToggle: () => void;
 };
@@ -39,14 +41,25 @@ export function CanvasConfigNodePanel({ node, isRunning, inputs, onConfigChange,
     const showStartEndFrames = dreamVideoMode === "start-end";
     const frameSelection = resolveCanvasStartEndFrameInputs(node, inputs);
     const hasStartEndFrames = isCanvasStartEndFrameSelectionComplete(frameSelection);
-    const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? count : 1 });
+    const pointsEstimate = useCanvasGenerationPointsEstimate({ config, mode, node, inputs, prompt: node.metadata?.composerContent ?? node.metadata?.prompt ?? "" });
+    const estimateRequired = Boolean(pointsEstimate.spec);
+    const estimateLoading = estimateRequired && pointsEstimate.query.isFetching;
+    const estimateFailed = estimateRequired && (pointsEstimate.query.isError || pointsEstimate.query.isRefetchError);
+    const estimatedPoints = pointsEstimate.query.data;
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const hasAnyInput = Boolean(inputSummary.textCount || inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const hasComposerContent = Boolean((node.metadata?.composerContent ?? node.metadata?.prompt ?? "").trim());
     const hasPromptInput = hasComposerContent || inputSummary.textCount > 0;
     const hasMediaInput = Boolean(inputSummary.imageCount || inputSummary.videoCount || inputSummary.audioCount);
     const canGenerate = isDreamVideo ? hasPromptInput && (showStartEndFrames ? hasStartEndFrames : hasMediaInput) : hasComposerContent || (mode === "audio" ? inputSummary.textCount > 0 : hasAnyInput);
+
+    const generate = async () => {
+        if (estimateRequired && (estimateFailed || estimatedPoints === undefined)) {
+            const result = await pointsEstimate.query.refetch();
+            if (!result.isSuccess || result.data === undefined) return;
+        }
+        await onGenerate(node.id);
+    };
 
     return (
         <div className="flex h-full w-full cursor-move flex-col px-3 pb-3 pt-7 text-sm" style={{ color: theme.node.text }} onWheel={(event) => event.stopPropagation()}>
@@ -114,13 +127,37 @@ export function CanvasConfigNodePanel({ node, isRunning, inputs, onConfigChange,
             {isDreamVideo ? <CanvasDreamVideoInputs node={node} config={config} inputs={inputs} onConfigChange={onConfigChange} className="mb-2" compact /> : null}
 
             <div className={`mb-2 grid min-w-0 cursor-default items-center gap-2 ${mode === "image" || mode === "video" || mode === "audio" ? "grid-cols-[minmax(0,1fr)_148px]" : "grid-cols-1"}`} onMouseDown={(event) => event.stopPropagation()}>
-                <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : { model })} capability={mode} onMissingConfig={() => openConfigDialog(true)} fullWidth />
+                <ModelPicker
+                    className="canvas-compact-control h-10"
+                    config={config}
+                    value={config.model}
+                    onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : { model })}
+                    capability={mode}
+                    onMissingConfig={() => openConfigDialog(true)}
+                    fullWidth
+                />
                 {mode === "video" ? (
-                    <CanvasVideoSettingsPopover config={config} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                    <CanvasVideoSettingsPopover
+                        config={config}
+                        placement="topRight"
+                        buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
+                        onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))}
+                    />
                 ) : mode === "image" ? (
-                    <CanvasImageSettingsPopover config={config} placement="topRight" autoAdjustOverflow={false} buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })} />
+                    <CanvasImageSettingsPopover
+                        config={config}
+                        placement="topRight"
+                        autoAdjustOverflow={false}
+                        buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
+                        onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
+                    />
                 ) : mode === "audio" ? (
-                    <CanvasAudioSettingsPopover config={config} placement="topRight" buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
+                    <CanvasAudioSettingsPopover
+                        config={config}
+                        placement="topRight"
+                        buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
+                        onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))}
+                    />
                 ) : null}
             </div>
 
@@ -128,9 +165,10 @@ export function CanvasConfigNodePanel({ node, isRunning, inputs, onConfigChange,
                 type="primary"
                 className="mt-auto !h-9 !w-full !cursor-pointer !rounded-lg"
                 danger={isRunning}
-                disabled={!isRunning && !canGenerate}
+                disabled={!isRunning && (!canGenerate || estimateLoading)}
                 onMouseDown={(event) => event.stopPropagation()}
-                onClick={() => (isRunning ? onStop(node.id) : onGenerate(node.id))}
+                onClick={() => (isRunning ? onStop(node.id) : void generate())}
+                title={estimateFailed ? localizeError(pointsEstimate.query.error, t, "error.dream.pointsEstimateFailed") : undefined}
             >
                 <span className="inline-flex items-center gap-1.5">
                     {isRunning ? (
@@ -139,12 +177,24 @@ export function CanvasConfigNodePanel({ node, isRunning, inputs, onConfigChange,
                             <Square className="size-3.5 fill-current" />
                             <span>{t("common.stop")}</span>
                         </>
+                    ) : estimateLoading ? (
+                        <>
+                            <LoaderCircle className="size-4 animate-spin" />
+                            <span>{t("canvas.pointsEstimating")}</span>
+                        </>
+                    ) : estimateFailed ? (
+                        <>
+                            <RefreshCw className="size-4" />
+                            <span>{t("common.retry")}</span>
+                        </>
                     ) : (
                         <>
-                            <span className="inline-flex items-center gap-1">
-                                <CreditSymbol />
-                                {credits.toLocaleString()}
-                            </span>
+                            {estimateRequired && estimatedPoints !== undefined ? (
+                                <span className="inline-flex min-w-10 items-center justify-center gap-1 tabular-nums">
+                                    <CreditSymbol />
+                                    {estimatedPoints.toLocaleString()}
+                                </span>
+                            ) : null}
                             <Play className="size-4" />
                             <span>{t("common.generate")}</span>
                         </>

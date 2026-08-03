@@ -82,6 +82,24 @@ describe("user store", () => {
         expect(storage.get("ai-comic-current-project-id")).toBe("external-9");
     });
 
+    test("refreshes user points from the current platform context and coalesces concurrent generation completions", async () => {
+        const context = platformContext();
+        useUserStore.setState(authenticatedUserState(context));
+        let calls = 0;
+        globalThis.fetch = (async () => {
+            calls += 1;
+            await Promise.resolve();
+            return Response.json({ ...context, currentPoints: 31 });
+        }) as typeof fetch;
+
+        const [first, second] = await Promise.all([useUserStore.getState().refreshPoints(), useUserStore.getState().refreshPoints()]);
+
+        expect(first).toBe(31);
+        expect(second).toBe(31);
+        expect(calls).toBe(1);
+        expect(useUserStore.getState().currentPoints).toBe(31);
+    });
+
     test("clears platform projects after logout", async () => {
         const { usePlatformProjectStore } = await import("@/stores/use-platform-project-store");
         const storage = installBrowserStorage({

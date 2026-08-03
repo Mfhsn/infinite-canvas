@@ -28,9 +28,11 @@ const buildEnv: RuntimeEnv = {
     VITE_AI_LLM_PLATFORM_CODE: import.meta.env.VITE_AI_LLM_PLATFORM_CODE,
     VITE_AI_API_KEY: import.meta.env.VITE_AI_API_KEY,
     VITE_AI_PLATFORM_ID: import.meta.env.VITE_AI_PLATFORM_ID,
+    VITE_DREAM_INCLUDE_PROJECT_ID: import.meta.env.VITE_DREAM_INCLUDE_PROJECT_ID,
     VITE_AI_MODELS: import.meta.env.VITE_AI_MODELS,
     VITE_SHOW_IMAGE_WORKBENCH: import.meta.env.VITE_SHOW_IMAGE_WORKBENCH,
     VITE_SHOW_VIDEO_WORKBENCH: import.meta.env.VITE_SHOW_VIDEO_WORKBENCH,
+    VITE_SHOW_AGENT_SIDEBAR: import.meta.env.VITE_SHOW_AGENT_SIDEBAR,
     VITE_SHOW_GITHUB: import.meta.env.VITE_SHOW_GITHUB,
     VITE_SHOW_DOCS: import.meta.env.VITE_SHOW_DOCS,
     VITE_SHOW_CONFIG: import.meta.env.VITE_SHOW_CONFIG,
@@ -54,12 +56,14 @@ const buildEnv: RuntimeEnv = {
 
 export const DOCS_URL = envString("VITE_DOC_URL") || "https://docs.canvas.best";
 export const ENV_AI_PLATFORM_ID = envInteger("VITE_AI_PLATFORM_ID", 6);
+export const ENV_DREAM_INCLUDE_PROJECT_ID = envBooleanDefault("VITE_DREAM_INCLUDE_PROJECT_ID", true);
 export const ENV_AI_LLM_URL = envString("VITE_AI_LLM_URL") || "https://106.75.147.147/api/v1/ai-service/llm/chat";
 export const ENV_AI_LLM_PLATFORM_CODE = envString("VITE_AI_LLM_PLATFORM_CODE") || "ucloud";
 export const ENV_AI_CHANNELS = envAiChannels();
 export const ENV_AI_CONFIG_OVERRIDE = envBoolean("VITE_AI_CONFIG_OVERRIDE");
 export const ENV_SHOW_IMAGE_WORKBENCH = envBooleanDefault("VITE_SHOW_IMAGE_WORKBENCH", true);
 export const ENV_SHOW_VIDEO_WORKBENCH = envBooleanDefault("VITE_SHOW_VIDEO_WORKBENCH", true);
+export const ENV_SHOW_AGENT_SIDEBAR = envBooleanDefault("VITE_SHOW_AGENT_SIDEBAR", true);
 export const ENV_SHOW_GITHUB = envBooleanDefault("VITE_SHOW_GITHUB", true);
 export const ENV_SHOW_DOCS = envBooleanDefault("VITE_SHOW_DOCS", true);
 export const ENV_SHOW_CONFIG = envBooleanDefault("VITE_SHOW_CONFIG", true);

@@ -115,7 +115,9 @@ export function PlatformProjectWorkspace({ className, style, compact = false }: 
             {error && loadStatus === "error" ? <Alert className="mt-2" type="error" showIcon message={error} /> : null}
             <div className="mt-2 max-h-[360px] overflow-y-auto">
                 {loadStatus === "loading" && !projects.length ? (
-                    <div className="grid min-h-28 place-items-center"><Spin /></div>
+                    <div className="grid min-h-28 place-items-center">
+                        <Spin />
+                    </div>
                 ) : projects.length ? (
                     projects.map((project) => {
                         const active = project.projectId === currentProjectId;
@@ -128,10 +130,12 @@ export function PlatformProjectWorkspace({ className, style, compact = false }: 
                                 className={cn("flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left transition", active ? "bg-stone-100 dark:bg-white/10" : "hover:bg-stone-100 disabled:opacity-60 dark:hover:bg-white/10")}
                                 onClick={() => void select(project.projectId)}
                             >
-                                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-400/10 dark:text-indigo-300"><BriefcaseBusiness className="size-4" /></span>
+                                <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-indigo-400/10 dark:text-indigo-300">
+                                    <BriefcaseBusiness className="size-4" />
+                                </span>
                                 <span className="min-w-0 flex-1">
                                     <span className="block truncate text-sm font-medium">{project.name}</span>
-                                    <span className="mt-1 block truncate text-xs text-stone-500">{project.projectId} · {t("user.points", { points: project.points ?? "--" })}</span>
+                                    <span className="mt-1 block truncate text-xs text-stone-500">{project.projectId}</span>
                                     <span className="mt-1 block truncate text-xs text-stone-500">{t("platformProject.permissions", { permissions: project.permissionIds.length ? project.permissionIds.join(", ") : "--" })}</span>
                                 </span>
                                 {switching ? <Spin size="small" /> : active ? <Check className="size-4 shrink-0" /> : null}

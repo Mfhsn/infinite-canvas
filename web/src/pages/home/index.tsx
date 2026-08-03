@@ -3,6 +3,7 @@ import { Button } from "antd";
 import { ArrowRight, FileText, ImagePlus, Images, Maximize2, Play, Plus, Sparkles, Video, Workflow } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 
+import { ENV_SHOW_IMAGE_WORKBENCH, ENV_SHOW_VIDEO_WORKBENCH } from "@/constant/env";
 import { useI18n } from "@/i18n/use-i18n";
 import { canvasProjectTitle } from "@/lib/canvas/canvas-project-title";
 import { cn } from "@/lib/utils";
@@ -12,13 +13,15 @@ import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 type Icon = ComponentType<{ className?: string }>;
 type VisualAsset = Extract<Asset, { kind: "image" | "video" }>;
 
-const quickTools = [
-    { path: "/canvas?mode=new", labelKey: "nav.canvas", descKey: "home.tool.canvasDesc", icon: Maximize2, featured: true },
-    { path: "/image", labelKey: "nav.image", descKey: "home.tool.imageDesc", icon: ImagePlus },
-    { path: "/video", labelKey: "nav.video", descKey: "home.tool.videoDesc", icon: Video },
-    { path: "/prompts", labelKey: "nav.prompts", descKey: "home.tool.promptsDesc", icon: FileText },
-    { path: "/assets", labelKey: "nav.assets", descKey: "home.tool.assetsDesc", icon: Images },
-] as const;
+const quickTools = (
+    [
+        { path: "/canvas?mode=new", labelKey: "nav.canvas", descKey: "home.tool.canvasDesc", icon: Maximize2, featured: true, visible: true },
+        { path: "/image", labelKey: "nav.image", descKey: "home.tool.imageDesc", icon: ImagePlus, visible: ENV_SHOW_IMAGE_WORKBENCH },
+        { path: "/video", labelKey: "nav.video", descKey: "home.tool.videoDesc", icon: Video, visible: ENV_SHOW_VIDEO_WORKBENCH },
+        { path: "/prompts", labelKey: "nav.prompts", descKey: "home.tool.promptsDesc", icon: FileText, visible: true },
+        { path: "/assets", labelKey: "nav.assets", descKey: "home.tool.assetsDesc", icon: Images, visible: true },
+    ] as const
+).filter((tool) => tool.visible);
 
 export default function IndexPage() {
     const { t, language } = useI18n();
@@ -86,7 +89,7 @@ export default function IndexPage() {
 
             <section className="mx-auto w-full max-w-7xl px-6 py-10 sm:py-12">
                 <SectionHeading title={t("home.quickStartTitle")} description={t("home.quickStartDesc")} />
-                <div className="mt-7 grid gap-3 sm:grid-cols-2 lg:grid-cols-10">
+                <div className={cn("mt-7 grid gap-3 sm:grid-cols-2", quickToolsGridClass(quickTools.length))}>
                     {quickTools.map((tool, index) => (
                         <QuickToolCard key={tool.path} path={tool.path} icon={tool.icon} index={index} title={t(tool.labelKey)} description={t(tool.descKey)} action={t("home.enterTool")} featured={"featured" in tool && tool.featured} />
                     ))}
@@ -262,6 +265,12 @@ function QuickToolCard({ path, icon: ToolIcon, index, title, description, action
             </div>
         </Link>
     );
+}
+
+function quickToolsGridClass(count: number) {
+    if (count >= 5) return "lg:grid-cols-10";
+    if (count === 4) return "lg:grid-cols-8";
+    return "lg:grid-cols-6";
 }
 
 function RecentProjectCard({ project, index, language, t }: { project: CanvasProject; index: number; language: string; t: ReturnType<typeof useI18n>["t"] }) {

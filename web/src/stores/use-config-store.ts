@@ -89,13 +89,14 @@ const DREAM_BASE_URL = "https://prod-cn.your-api-server.com";
 const DREAM_CHANNEL_ID = "dream-default";
 const DREAM_CHANNEL_NAME = "";
 const DREAM_DEFAULT_IMAGE_MODEL = "doubao-seedream-4.5";
-const DREAM_DEFAULT_VIDEO_MODEL = "doubao-seedance-1-5-pro-251215";
+const DREAM_LEGACY_VIDEO_MODEL = "doubao-seedance-1-5-pro-251215";
+const DREAM_DEFAULT_VIDEO_MODEL = "doubao-seedance-2-0-260128";
 const DREAM_DEFAULT_TEXT_MODEL = "doubao-1.5-pro";
 const DREAM_DEFAULT_AUDIO_MODEL = "tts-synthesize";
 
 export const DREAM_IMAGE_MODELS = ["doubao-seedream-4.5", "doubao-seedream-5-0-260128"] as const;
 
-export const DREAM_VIDEO_MODELS = ["doubao-seedance-1-5-pro-251215", "doubao-seedance-2-0-260128"] as const;
+export const DREAM_VIDEO_MODELS = ["doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-mini-260615"] as const;
 
 export const DREAM_TEXT_MODELS = [DREAM_DEFAULT_TEXT_MODEL] as const;
 
@@ -364,7 +365,7 @@ export const useConfigStore = create<ConfigStore>()(
                         videoWatermark: config.videoWatermark || "false",
                         canvasImageCount: config.canvasImageCount || "3",
                         imageModels: usePersistedModelLists && Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels, channels) : filterModelsByCapability(models, "image"),
-                        videoModels: usePersistedModelLists && Array.isArray(persistedConfig.videoModels) ? normalizeModelList(config.videoModels, channels) : filterModelsByCapability(models, "video"),
+                        videoModels: usePersistedModelLists && Array.isArray(persistedConfig.videoModels) ? normalizeVideoModelList(config.videoModels, channels) : filterModelsByCapability(models, "video"),
                         textModels: usePersistedModelLists && Array.isArray(persistedConfig.textModels) ? normalizeModelList(config.textModels, channels) : filterModelsByCapability(models, "text"),
                         audioModels: usePersistedModelLists && Array.isArray(persistedConfig.audioModels) ? normalizeModelList(config.audioModels, channels) : filterModelsByCapability(models, "audio"),
                     },
@@ -389,6 +390,16 @@ function normalizeModelList(models: string[], channels: ModelChannel[]) {
     return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)))
         .map((model) => normalizeModelOptionValue(model, channels))
         .filter((model) => Boolean(model) && (!allModelOptions.length || allModelOptions.includes(model)));
+}
+
+function normalizeVideoModelList(models: string[], channels: ModelChannel[]) {
+    const normalized = normalizeModelList(models, channels).filter((model) => {
+        const decoded = decodeChannelModel(model);
+        return !(decoded?.channelId === DREAM_CHANNEL_ID && decoded.model === DREAM_LEGACY_VIDEO_MODEL);
+    });
+    const builtInChannel = channels.find((channel) => channel.id === DREAM_CHANNEL_ID && channel.apiFormat === "dream");
+    const builtInModels = builtInChannel ? DREAM_VIDEO_MODELS.filter((model) => builtInChannel.models.includes(model)).map((model) => encodeChannelModel(builtInChannel.id, model)) : [];
+    return uniqueModelOptions([...builtInModels, ...normalized]);
 }
 
 export function useEffectiveConfig() {
@@ -417,9 +428,14 @@ export function createDreamApiChannel(channel?: Partial<ModelChannel>): ModelCha
         apiKey: "",
         apiFormat: "dream",
         platformId: ENV_AI_PLATFORM_ID,
-        models: DREAM_API_MODELS,
         ...channel,
+        models: normalizeDreamApiModels(channel?.models),
     });
+}
+
+function normalizeDreamApiModels(models?: string[]) {
+    const customModels = uniqueRawModels(models || []).filter((model) => model !== DREAM_LEGACY_VIDEO_MODEL && !DREAM_API_MODELS.includes(model as (typeof DREAM_API_MODELS)[number]));
+    return [...DREAM_API_MODELS, ...customModels];
 }
 
 export function encodeChannelModel(channelId: string, model: string) {
@@ -496,14 +512,15 @@ function normalizeChannels(config: AiConfig) {
     const hadLegacyDefaultChannel = persistedChannels.some(isLegacyDefaultChannel);
     const channels = persistedChannels
         .filter((channel) => !isLegacyDefaultChannel(channel))
-        .map((channel, index) =>
-            createModelChannel({
+        .map((channel, index) => {
+            const normalizedChannel = {
                 ...channel,
                 id: channel.id || `channel-${index + 1}`,
                 name: channel.name || "",
                 models: uniqueRawModels(channel.models || []),
-            }),
-        );
+            };
+            return normalizedChannel.id === DREAM_CHANNEL_ID && normalizeApiFormat(normalizedChannel.apiFormat) === "dream" ? createDreamApiChannel(normalizedChannel) : createModelChannel(normalizedChannel);
+        });
     if (hadLegacyDefaultChannel) channels.unshift(createDreamApiChannel());
     if (!channels.length) {
         channels.push(createDreamApiChannel());

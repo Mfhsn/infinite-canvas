@@ -39,9 +39,12 @@ type UserStore = {
     projectContext: ProjectContext | null;
     error: string | null;
     initialize: () => Promise<void>;
+    refreshPoints: () => Promise<number | null>;
     logout: () => Promise<void>;
     handleUnauthorized: () => void;
 };
+
+let pointsRefreshPromise: Promise<number | null> | null = null;
 
 const emptySessionState = {
     user: null,
@@ -152,6 +155,30 @@ export const useUserStore = create<UserStore>()((set, get) => ({
         } catch (error) {
             set({ status: "error", ...emptySessionState, error: errorMessage(error) });
         }
+    },
+    refreshPoints: async () => {
+        const snapshot = get();
+        if (snapshot.status !== "authenticated" || !snapshot.profile || !snapshot.projectContext) return snapshot.currentPoints;
+        if (pointsRefreshPromise) return pointsRefreshPromise;
+        const expectedUid = snapshot.profile.uid;
+        const expectedProjectId = snapshot.projectContext.externalProjectId;
+        pointsRefreshPromise = platformApi
+            .getContext()
+            .then((context) => {
+                const current = get();
+                if (current.status === "authenticated" && current.profile?.uid === expectedUid && current.projectContext?.externalProjectId === expectedProjectId) {
+                    set({ currentPoints: context.currentPoints });
+                }
+                return context.currentPoints;
+            })
+            .catch((error) => {
+                if (error instanceof PlatformApiError && error.status === 401) get().handleUnauthorized();
+                throw error;
+            })
+            .finally(() => {
+                pointsRefreshPromise = null;
+            });
+        return pointsRefreshPromise;
     },
     logout: async () => {
         await platformApi.logout();

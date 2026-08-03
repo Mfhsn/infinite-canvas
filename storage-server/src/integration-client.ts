@@ -18,7 +18,7 @@ export interface IntegrationClient {
   listProjects(externalToken: string): Promise<PlatformProject[]>;
   createProject(externalToken: string, input: PlatformProjectCreateInput): Promise<PlatformProject | null>;
   exchange(externalToken: string, externalProjectId?: string): Promise<IntegrationExchangeResult>;
-  current(localToken: string): Promise<PlatformContext>;
+  current(localToken: string, externalToken?: string): Promise<PlatformContext>;
   logout(externalToken: string): Promise<void>;
 }
 
@@ -76,9 +76,10 @@ export class HttpIntegrationClient implements IntegrationClient {
       authorization: `Bearer ${token}`,
     });
     try {
+      const context = parsePlatformContext(value, this.config);
       return {
         localToken: normalizeBearerToken(requiredString(value, ['local_token', 'localToken'], 'local token')),
-        context: parsePlatformContext(value, this.config),
+        context: await this.withExternalProfilePoints(context, token),
       };
     } catch (error) {
       console.error('[integration] exchange response validation failed', {
@@ -89,13 +90,29 @@ export class HttpIntegrationClient implements IntegrationClient {
     }
   }
 
-  async current(localToken: string): Promise<PlatformContext> {
+  async current(localToken: string, externalToken?: string): Promise<PlatformContext> {
     const value = await this.requestObject('GET', '/api/integration/context/current', undefined, { authorization: `Bearer ${localToken}` });
-    return parsePlatformContext(value, this.config);
+    const context = parsePlatformContext(value, this.config);
+    return externalToken ? this.withExternalProfilePoints(context, normalizeExternalToken(externalToken)) : context;
   }
 
   async logout(externalToken: string): Promise<void> {
     await this.requestValue('POST', '/api/integration/external/auth/logout', {}, { 'x-external-token': normalizeExternalToken(externalToken) });
+  }
+
+  private async withExternalProfilePoints(context: PlatformContext, externalToken: string): Promise<PlatformContext> {
+    const profile = await this.requestObject('GET', '/api/integration/external/profile', undefined, {
+      'x-external-token': externalToken,
+    });
+    const profileUid = requiredString(profile, ['id', 'uid', 'user_id'], 'profile user id');
+    if (profileUid !== context.uid) {
+      throw new HttpError(502, 'invalid_integration_response', 'Platform profile does not match the active session');
+    }
+    const points = first(profile, ['points', 'current_points', 'currentPoints']);
+    if (points === null || points === undefined || points === '') {
+      throw new HttpError(502, 'invalid_integration_response', 'Platform profile is missing user points');
+    }
+    return { ...context, currentPoints: finiteNumber(points, 'profile points') };
   }
 
   private async resolveExternalProjectId(externalToken: string): Promise<string> {
@@ -160,16 +177,19 @@ export class HttpIntegrationClient implements IntegrationClient {
           : status === 422
             ? 'Platform rejected the request'
             : `Platform request failed (upstream ${response.status})`;
-      const detail = summarizeUpstreamError(response.body);
+      const { browserDetail, diagnosticDetail } = summarizeUpstreamError(
+        response.body,
+        sensitiveRequestValues(body, headers),
+      );
       console.error('[integration] upstream response rejected', {
         method,
         path,
         status: response.status,
         contentType: response.headers['content-type'],
         body: responseBodyShape(response.body),
-        detail: detail || undefined,
+        detail: diagnosticDetail || undefined,
       });
-      throw new HttpError(status, code, detail ? `${baseMessage}: ${detail}` : baseMessage);
+      throw new HttpError(status, code, browserDetail ? `${baseMessage}: ${browserDetail}` : baseMessage);
     }
     if (!response.body.length) return {};
     try {
@@ -197,15 +217,15 @@ export function normalizeBearerToken(value: string): string {
   return value.trim().replace(/^Bearer\s+/i, '').trim();
 }
 
-function summarizeUpstreamError(body: Buffer): string | null {
-  if (!body.length) return null;
+function summarizeUpstreamError(body: Buffer, secrets: string[]): { browserDetail: string | null; diagnosticDetail: string | null } {
+  if (!body.length) return { browserDetail: null, diagnosticDetail: null };
   let value: unknown;
   try {
     value = JSON.parse(body.toString('utf8'));
   } catch {
-    return null;
+    return { browserDetail: null, diagnosticDetail: null };
   }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { browserDetail: null, diagnosticDetail: null };
   const record = value as Record<string, unknown>;
   const detail = record.detail;
   if (Array.isArray(detail)) {
@@ -216,12 +236,39 @@ function summarizeUpstreamError(body: Buffer): string | null {
       const message = typeof itemRecord.msg === 'string' ? itemRecord.msg.trim() : '';
       return message ? [location ? `${location}: ${message}` : message] : [];
     });
-    return messages.length ? messages.slice(0, 3).join('; ') : null;
+    const validationDetail = messages.length ? messages.slice(0, 3).join('; ') : null;
+    return { browserDetail: validationDetail, diagnosticDetail: validationDetail };
   }
   // Do not forward arbitrary upstream messages: some platforms echo request
   // values in them. Structured validation locations/messages are the only
   // diagnostic detail safe enough to return to the browser.
-  return null;
+  const diagnostic = [detail, record.message, record.msg, record.error]
+    .find((candidate): candidate is string => typeof candidate === 'string' && Boolean(candidate.trim()));
+  return {
+    browserDetail: null,
+    diagnosticDetail: diagnostic ? redactDiagnostic(diagnostic, secrets) : null,
+  };
+}
+
+function sensitiveRequestValues(body: Record<string, unknown> | undefined, headers: Record<string, string>): string[] {
+  const values: string[] = [];
+  for (const [key, value] of Object.entries(body ?? {})) {
+    if (/(?:token|password|secret)/i.test(key) && typeof value === 'string' && value) values.push(value);
+  }
+  for (const [key, value] of Object.entries(headers)) {
+    if (/(?:authorization|token|cookie)/i.test(key) && value) {
+      values.push(value, value.replace(/^Bearer\s+/i, ''));
+    }
+  }
+  return [...new Set(values.filter((value) => value.length >= 3))].sort((left, right) => right.length - left.length);
+}
+
+function redactDiagnostic(value: string, secrets: string[]): string | null {
+  let sanitized = value.replace(/[\r\n\t]+/g, ' ').trim();
+  for (const secret of secrets) sanitized = sanitized.split(secret).join('[redacted]');
+  sanitized = sanitized.replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [redacted]');
+  if (!sanitized) return null;
+  return sanitized.slice(0, 1000);
 }
 
 function parsePlatformProject(value: Record<string, unknown>): PlatformProject {

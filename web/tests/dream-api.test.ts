@@ -72,7 +72,53 @@ describe("Dream media proxy", () => {
     });
 });
 
+describe("Dream points estimate request", () => {
+    test("uses the documented endpoint and preserves an explicit zero estimate", async () => {
+        const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, message: "ok", data: { points: 0 } } });
+        try {
+            const { requestDreamPointsEstimate } = await import("@/services/api/dream");
+            const { defaultConfig } = await import("@/stores/use-config-store");
+            const request = { req_key: "doubao-seedream-4.5", platform_id: 6, count: 1, ref_image_count: 0, image_quality: "medium" as const, size: "2048x2048", width: 2048, height: 2048 };
+
+            await expect(requestDreamPointsEstimate({ ...defaultConfig, baseUrl: "http://example.test", apiKey: "access-token" }, request)).resolves.toBe(0);
+            expect(post.mock.calls[0]?.[0]).toBe("http://example.test/api/v1/projects/calculate-points");
+            expect(post.mock.calls[0]?.[1]).toEqual(request);
+        } finally {
+            post.mockRestore();
+        }
+    });
+
+    test("rejects null points so generation cannot continue", async () => {
+        const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, message: "ok", data: { points: null } } });
+        try {
+            const { requestDreamPointsEstimate } = await import("@/services/api/dream");
+            const { defaultConfig } = await import("@/stores/use-config-store");
+
+            await expect(
+                requestDreamPointsEstimate({ ...defaultConfig, baseUrl: "http://example.test", apiKey: "access-token" }, { req_key: "doubao-seedance-2-0-260128", platform_id: 6, count: 1, duration: 5, audio_flag: false, has_input: true }),
+            ).rejects.toMatchObject({ key: "error.dream.pointsEstimateUnavailable" });
+        } finally {
+            post.mockRestore();
+        }
+    });
+});
+
 describe("Dream image request", () => {
+    test("builds project fields only when the environment-controlled behavior is enabled", async () => {
+        useUserStore.setState({
+            projectContext: {
+                localProjectId: 42,
+                externalProjectId: "external-42",
+                sourceSystem: "platform",
+                expiresAt: "2026-07-24T00:00:00Z",
+            },
+        });
+        const { dreamProjectRequestFields } = await import("@/services/api/dream");
+
+        expect(dreamProjectRequestFields(true)).toEqual({ project_id: 42 });
+        expect(dreamProjectRequestFields(false)).toEqual({});
+    });
+
     test("requires the access token used as API Key", async () => {
         const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, message: "ok", data: "https://example.test/image.png" } });
         try {

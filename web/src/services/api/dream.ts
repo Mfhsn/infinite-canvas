@@ -1,12 +1,13 @@
 import axios from "axios";
 import { nanoid } from "nanoid";
 
-import { ENV_AI_TASK_TIMEOUT_MS } from "@/constant/env";
+import { ENV_AI_TASK_TIMEOUT_MS, ENV_DREAM_INCLUDE_PROJECT_ID } from "@/constant/env";
 import { audioMimeType, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { AppError, requestError } from "@/lib/app-error";
 import { resolveDreamImageDimensions } from "@/lib/dream-image-size";
 import { dataUrlToFile } from "@/lib/image-utils";
-import { DREAM_SEEDANCE_15_MODEL, DREAM_SEEDANCE_20_MODEL, dreamOmniReferenceIssue, ensureSeedanceReferenceMentions, normalizeDreamVideoDuration, normalizeDreamVideoMode, normalizeDreamVideoRatio, normalizeDreamVideoSeed } from "@/lib/seedance-video";
+import { dreamOmniReferenceIssue, ensureSeedanceReferenceMentions, isDreamSeedance15Model, isDreamSeedance20Model, normalizeDreamVideoDuration, normalizeDreamVideoMode, normalizeDreamVideoRatio, normalizeDreamVideoSeed } from "@/lib/seedance-video";
+import type { DreamPointsEstimateRequest } from "@/lib/dream-points";
 import type { I18nKey } from "@/i18n/messages";
 import { DREAM_API_PROXY_PATH, DREAM_MEDIA_PROXY_PATH, dreamApiProxyUrl, dreamMediaProxyUrl } from "@/services/api/dream-media";
 import { hasPlatformSessionBinding, platformSessionBindingHeaders } from "@/services/platform-session";
@@ -29,12 +30,27 @@ export function fetchDreamModels() {
     return [...DREAM_API_MODELS].sort((a, b) => a.localeCompare(b));
 }
 
+export async function requestDreamPointsEstimate(config: AiConfig, request: DreamPointsEstimateRequest, options?: RequestOptions) {
+    try {
+        const response = await axios.post<DreamApiEnvelope<{ points?: number | null }>>(dreamApiUrl(config, "/api/v1/projects/calculate-points"), request, { headers: dreamHeaders(config), signal: options?.signal });
+        if (response.data.code !== undefined && response.data.code !== 0) {
+            throw new AppError("error.dream.pointsEstimateFailed", undefined, { rawMessage: response.data.message || response.data.msg });
+        }
+        const points = response.data.data?.points;
+        if (points === null || points === undefined) throw new AppError("error.dream.pointsEstimateUnavailable");
+        if (typeof points !== "number" || !Number.isFinite(points) || points < 0) throw new AppError("error.dream.pointsEstimateInvalid");
+        return points;
+    } catch (error) {
+        throw readDreamRequestError(error, "error.dream.pointsEstimateFailed");
+    }
+}
+
 export async function requestDreamImageGeneration(config: AiConfig, prompt: string, count: number, options?: RequestOptions) {
     const { width, height } = resolveDreamImageDimensions(config.size, config.quality);
     const response = await axios.post<DreamApiEnvelope>(
         dreamApiUrl(config, "/api/v1/dream/dream_image"),
         {
-            project_id: dreamProjectId(),
+            ...dreamProjectRequestFields(),
             dream_image_req_key: modelOptionName(config.model),
             script_text: prompt,
             width,
@@ -55,7 +71,7 @@ export async function requestDreamImageEdit(config: AiConfig, prompt: string, re
     const response = await axios.post<DreamApiEnvelope>(
         dreamApiUrl(config, "/api/v1/dream/dream_image"),
         {
-            project_id: dreamProjectId(),
+            ...dreamProjectRequestFields(),
             dream_image_req_key: modelOptionName(config.model),
             image_asset_ids: await dreamImageAssetIds(config, references, options),
             script_text: prompt,
@@ -142,7 +158,7 @@ async function requestDreamInpainting(config: AiConfig, prompt: string, referenc
     const response = await axios.post<DreamApiEnvelope>(
         dreamApiUrl(config, "/api/v1/dream/inpainting_edit"),
         {
-            project_id: dreamProjectId(),
+            ...dreamProjectRequestFields(),
             req_key: modelOptionName(config.model) || "i2i_inpainting_edit",
             task_type: "dream",
             image_asset_ids: await dreamImageAssetIds(config, [...references, mask], options),
@@ -158,7 +174,7 @@ async function requestDreamOutpainting(config: AiConfig, prompt: string, referen
     const response = await axios.post<DreamApiEnvelope>(
         dreamApiUrl(config, "/api/v1/dream/outpainting"),
         {
-            project_id: dreamProjectId(),
+            ...dreamProjectRequestFields(),
             req_key: modelOptionName(config.model) || "i2i_outpainting",
             task_type: "dream",
             image_asset_ids: await dreamImageAssetIds(config, references, options),
@@ -385,7 +401,7 @@ async function dreamVideoRequestBody(config: AiConfig, model: string, prompt: st
     const scriptText = mode === "subject" ? ensureSeedanceReferenceMentions(promptText, references, videoReferences, audioReferences) : promptText;
     const body: Record<string, unknown> = {
         platform_id: config.platformId,
-        project_id: dreamProjectId(),
+        ...dreamProjectRequestFields(),
         // Seedance 2.0's omni-reference mode uses reference2video while its
         // uploaded image, video, and audio assets remain flat ID lists.
         action_type: mode === "subject" ? "reference2video" : "start-end2video",
@@ -419,6 +435,10 @@ async function dreamVideoRequestBody(config: AiConfig, model: string, prompt: st
 function dreamProjectId() {
     const projectId = useUserStore.getState().projectContext?.localProjectId;
     return typeof projectId === "number" && Number.isSafeInteger(projectId) && projectId >= 0 ? projectId : 0;
+}
+
+export function dreamProjectRequestFields(includeProjectId = ENV_DREAM_INCLUDE_PROJECT_ID): { project_id?: number } {
+    return includeProjectId ? { project_id: dreamProjectId() } : {};
 }
 
 function dreamStartEndReferences(references: ReferenceImage[]) {
@@ -545,14 +565,6 @@ function dreamFileExt(name: string, mimeType: string, fallback: string) {
         return subtype || fallback;
     }
     return fallback;
-}
-
-function isDreamSeedance15Model(model: string) {
-    return modelOptionName(model) === DREAM_SEEDANCE_15_MODEL;
-}
-
-function isDreamSeedance20Model(model: string) {
-    return modelOptionName(model) === DREAM_SEEDANCE_20_MODEL;
 }
 
 function boolConfig(value: string, fallback: boolean) {

@@ -47,7 +47,9 @@ export async function handleIntegrationRoutes(
       && current.refreshToken === refreshToken
       && (!externalProjectId || current.context.externalProjectId === externalProjectId)
     ) {
-      sendJson(res, 200, current.context, { [SESSION_BINDING_HEADER]: current.binding });
+      const context = await runtime.client.current(current.localToken, current.externalToken ?? undefined);
+      const refreshed = await runtime.sessions.updateContext(current, context);
+      sendJson(res, 200, refreshed.context, { [SESSION_BINDING_HEADER]: refreshed.binding });
       return true;
     }
     let result;
@@ -121,7 +123,7 @@ export async function handleIntegrationRoutes(
     const suppliedBinding = headerValue(req, SESSION_BINDING_HEADER);
     if (suppliedBinding && !runtime.sessions.matchesBinding(session, suppliedBinding)) throw bindingMismatch();
     try {
-      const current = await runtime.client.current(session.localToken);
+      const current = await runtime.client.current(session.localToken, session.externalToken ?? undefined);
       const refreshed = await runtime.sessions.updateContext(session, current);
       sendJson(res, 200, refreshed.context, { [SESSION_BINDING_HEADER]: refreshed.binding });
     } catch (error) {

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import { ArrowUp, ImagePlus, LoaderCircle, Square, X } from "lucide-react";
+import { ArrowUp, ImagePlus, LoaderCircle, RefreshCw, Square, X } from "lucide-react";
 import { Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { CreditSymbol, requestCreditCost } from "@/constant/credits";
+import { CreditSymbol } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -16,6 +16,8 @@ import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { useI18n } from "@/i18n/use-i18n";
+import { localizeError } from "@/lib/app-error";
+import { useCanvasGenerationPointsEstimate } from "@/hooks/use-generation-points-estimate";
 import { defaultDreamVideoMode, isBuiltInDreamVideoConfig, normalizeDreamVideoMode } from "@/lib/seedance-video";
 import { isCanvasStartEndFrameSelectionComplete, resolveCanvasStartEndFrameInputs, type NodeGenerationInput } from "./canvas-node-generation";
 import { CanvasDreamVideoInputs } from "./canvas-dream-video-inputs";
@@ -27,7 +29,7 @@ type CanvasNodePromptPanelProps = {
     isRunning: boolean;
     onPromptChange: (nodeId: string, prompt: string) => void;
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => void;
-    onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
+    onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void | Promise<void>;
     onStop: (nodeId: string) => void;
     onReferenceImagesUpload: (nodeId: string, files: File[]) => Promise<void>;
     onReferenceImageRemove: (nodeId: string, referenceNodeId: string) => void;
@@ -57,7 +59,11 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const hasStartEndFrames = isCanvasStartEndFrameSelectionComplete(frameSelection);
     const hasMediaReferences = inputs.some((input) => input.type === "image" || input.type === "video" || input.type === "audio");
     const canGenerate = Boolean(prompt.trim()) && (!isDreamVideo || (showStartEndFrames ? hasStartEndFrames : hasMediaReferences));
-    const credits = requestCreditCost({ channelMode: config.channelMode, model: config.model, count: mode === "image" ? config.count : 1 });
+    const pointsEstimate = useCanvasGenerationPointsEstimate({ config, mode, node, inputs, prompt });
+    const estimateRequired = Boolean(pointsEstimate.spec);
+    const estimateLoading = estimateRequired && pointsEstimate.query.isFetching;
+    const estimateFailed = estimateRequired && (pointsEstimate.query.isError || pointsEstimate.query.isRefetchError);
+    const estimatedPoints = pointsEstimate.query.data;
 
     useEffect(() => {
         setPrompt(isEditingExistingContent ? "" : node.metadata?.prompt || "");
@@ -68,10 +74,14 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         if (!isEditingExistingContent) onPromptChange(node.id, value);
     };
 
-    const submit = () => {
+    const submit = async () => {
         const text = prompt.trim();
         if (!text || isRunning || !canGenerate) return;
-        onGenerate(node.id, mode, text);
+        if (estimateRequired && (estimateFailed || estimatedPoints === undefined)) {
+            const result = await pointsEstimate.query.refetch();
+            if (!result.isSuccess || result.data === undefined) return;
+        }
+        await onGenerate(node.id, mode, text);
         setPrompt("");
     };
 
@@ -99,7 +109,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 value={prompt}
                 references={mentionReferences}
                 onChange={updatePrompt}
-                onSubmit={submit}
+                onSubmit={() => void submit()}
                 className="thin-scrollbar h-24 w-full resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none"
                 style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}
                 placeholder={promptPlaceholder(mode, hasImageContent, hasTextContent, t)}
@@ -171,7 +181,15 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 ) : mode === "video" ? (
                     <>
                         <div className="min-w-[180px] flex-[1_1_200px]">
-                            <ModelPicker className="!h-10 !w-full !min-w-0" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, videoModelPatch(model))} capability="video" fullWidth onMissingConfig={() => openConfigDialog(true)} />
+                            <ModelPicker
+                                className="!h-10 !w-full !min-w-0"
+                                config={config}
+                                value={config.model}
+                                onChange={(model) => onConfigChange(node.id, videoModelPatch(model))}
+                                capability="video"
+                                fullWidth
+                                onMissingConfig={() => openConfigDialog(true)}
+                            />
                         </div>
                         <div className="min-w-[200px] flex-[1_1_220px] [&>span]:w-full">
                             <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !w-full !max-w-none !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
@@ -195,9 +213,10 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     type="primary"
                     className="ml-auto !h-10 !min-w-16 shrink-0 !rounded-full !px-3"
                     danger={isRunning}
-                    disabled={!isRunning && !canGenerate}
-                    onClick={() => (isRunning ? onStop(node.id) : submit())}
+                    disabled={!isRunning && (!canGenerate || estimateLoading)}
+                    onClick={() => (isRunning ? onStop(node.id) : void submit())}
                     aria-label={isRunning ? t("canvas.stopGenerationOk") : t("common.generate")}
+                    title={estimateFailed ? localizeError(pointsEstimate.query.error, t, "error.dream.pointsEstimateFailed") : undefined}
                 >
                     <span className="flex items-center gap-1.5">
                         {isRunning ? (
@@ -206,12 +225,24 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                 <Square className="size-3.5 fill-current" />
                                 <span className="text-xs font-medium">{t("common.stop")}</span>
                             </>
+                        ) : estimateLoading ? (
+                            <>
+                                <LoaderCircle className="size-4 animate-spin" />
+                                <span className="text-xs font-medium">{t("canvas.pointsEstimating")}</span>
+                            </>
+                        ) : estimateFailed ? (
+                            <>
+                                <RefreshCw className="size-4" />
+                                <span className="text-xs font-medium">{t("common.retry")}</span>
+                            </>
                         ) : (
                             <>
-                                <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
-                                    <CreditSymbol />
-                                    {credits.toLocaleString()}
-                                </span>
+                                {estimateRequired && estimatedPoints !== undefined ? (
+                                    <span className="inline-flex min-w-10 items-center justify-center gap-1 text-xs font-medium tabular-nums">
+                                        <CreditSymbol />
+                                        {estimatedPoints.toLocaleString()}
+                                    </span>
+                                ) : null}
                                 <ArrowUp className="size-4" />
                             </>
                         )}
