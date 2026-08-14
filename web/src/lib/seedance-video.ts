@@ -18,6 +18,13 @@ export const DREAM_SEEDANCE_20_FAST_MODEL = "doubao-seedance-2-0-fast-260128";
 export const DREAM_SEEDANCE_20_MINI_MODEL = "doubao-seedance-2-0-mini-260615";
 export const DREAM_SEEDANCE_20_MODELS = [DREAM_SEEDANCE_20_MODEL, DREAM_SEEDANCE_20_FAST_MODEL, DREAM_SEEDANCE_20_MINI_MODEL] as const;
 export type DreamVideoMode = "start-end" | "subject";
+export type DreamVideoResolution = "720p" | "1080p" | "4K";
+
+export const dreamVideoResolutionOptions: ReadonlyArray<{ value: DreamVideoResolution; label: DreamVideoResolution }> = [
+    { value: "720p", label: "720p" },
+    { value: "1080p", label: "1080p" },
+    { value: "4K", label: "4K" },
+];
 
 export const seedanceResolutionOptions = [
     { value: "480p", label: "480p" },
@@ -54,6 +61,20 @@ export function isDreamSeedance15Model(model: string) {
 
 export function isDreamSeedance20Model(model: string) {
     return DREAM_SEEDANCE_20_MODELS.includes(modelOptionName(model) as (typeof DREAM_SEEDANCE_20_MODELS)[number]);
+}
+
+export function isDreamVideoResolutionSelectable(model: string) {
+    return modelOptionName(model) === DREAM_SEEDANCE_20_MODEL;
+}
+
+export function normalizeDreamVideoResolution(value: string, model: string): DreamVideoResolution {
+    if (!isDreamVideoResolutionSelectable(model)) return "720p";
+    const normalized = String(value || "")
+        .trim()
+        .toLowerCase();
+    if (normalized === "1080" || normalized === "1080p") return "1080p";
+    if (normalized === "4k") return "4K";
+    return "720p";
 }
 
 export function dreamVideoModes(model: string): DreamVideoMode[] {

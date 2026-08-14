@@ -21,6 +21,57 @@ describe("canvas library model", () => {
         expect(normalizeCanvasProject(normalized)).toEqual(normalized);
     });
 
+    test("removes session bindings from persisted canvas media URLs", () => {
+        const normalized = normalizeCanvasProject({
+            id: "project-1",
+            title: "Bound media",
+            createdAt: "1",
+            updatedAt: "2",
+            nodes: [
+                {
+                    id: "image-1",
+                    type: "image",
+                    title: "Image",
+                    position: { x: 0, y: 0 },
+                    width: 100,
+                    height: 100,
+                    metadata: {
+                        storageKey: "image:one",
+                        content: "/api/storage/blobs/image%3Aone?download=1&session_binding=binding-old#preview",
+                    },
+                },
+            ],
+            connections: [],
+            chatSessions: [
+                {
+                    id: "chat-1",
+                    title: "Chat",
+                    createdAt: "1",
+                    updatedAt: "2",
+                    messages: [
+                        {
+                            id: "message-1",
+                            role: "user",
+                            text: "Reference",
+                            references: [
+                                {
+                                    id: "reference-1",
+                                    type: "image",
+                                    title: "Reference",
+                                    storageKey: "image:two",
+                                    dataUrl: "/api/storage/blobs/image%3Atwo?session_binding=binding-old",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+
+        expect(normalized.nodes[0]?.metadata?.content).toBe("/api/storage/blobs/image%3Aone?download=1#preview");
+        expect(normalized.chatSessions[0]?.messages[0]?.references?.[0]?.dataUrl).toBe("/api/storage/blobs/image%3Atwo");
+    });
+
     test("normalizes folders without repairing parent references", () => {
         const folder = normalizeCanvasFolder({
             id: "child",

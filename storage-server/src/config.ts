@@ -59,7 +59,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       tlsServerName: env.INTEGRATION_TLS_SERVER_NAME?.trim() || '',
       disableSni: boolEnv(env, 'INTEGRATION_TLS_DISABLE_SNI'),
       externalProjectId: env.INTEGRATION_EXTERNAL_PROJECT_ID?.trim() || '',
-      sourceSystem: env.INTEGRATION_SOURCE_SYSTEM?.trim() || '',
+      sourceSystem: env.INTEGRATION_SOURCE_SYSTEM?.trim() || 'multi_user_platform',
       sessionSecret: env.INTEGRATION_SESSION_SECRET || '',
       cookieName: env.INTEGRATION_COOKIE_NAME?.trim() || 'infinite_canvas_session',
       cookieSecure: boolEnvDefault(env, 'INTEGRATION_COOKIE_SECURE', env.NODE_ENV === 'production'),

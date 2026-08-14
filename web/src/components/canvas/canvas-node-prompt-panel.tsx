@@ -165,7 +165,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 {mode === "image" ? (
                     <>
                         <div className="min-w-[180px] flex-[1_1_200px]">
-                            <ModelPicker className="!h-10 !w-full !min-w-0" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" fullWidth onMissingConfig={() => openConfigDialog(true)} />
+                            <ModelPicker className="!h-10 !w-full !min-w-0" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" fullWidth showChannel={false} onMissingConfig={() => openConfigDialog(true)} />
                         </div>
                         <div className="min-w-[210px] flex-[1.15_1_230px] [&>span]:w-full">
                             <CanvasImageSettingsPopover
@@ -188,6 +188,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                 onChange={(model) => onConfigChange(node.id, videoModelPatch(model))}
                                 capability="video"
                                 fullWidth
+                                showChannel={false}
                                 onMissingConfig={() => openConfigDialog(true)}
                             />
                         </div>
@@ -198,7 +199,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 ) : mode === "audio" ? (
                     <>
                         <div className="min-w-[180px] flex-[1_1_200px]">
-                            <ModelPicker className="!h-10 !w-full !min-w-0" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="audio" fullWidth onMissingConfig={() => openConfigDialog(true)} />
+                            <ModelPicker className="!h-10 !w-full !min-w-0" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="audio" fullWidth showChannel={false} onMissingConfig={() => openConfigDialog(true)} />
                         </div>
                         <div className="min-w-[200px] flex-[1_1_220px] [&>span]:w-full">
                             <CanvasAudioSettingsPopover config={config} buttonClassName="!h-10 !w-full !max-w-none !justify-start !rounded-full !px-3" onConfigChange={(key, value) => onConfigChange(node.id, audioConfigPatch(key, value))} />
@@ -206,7 +207,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     </>
                 ) : (
                     <div className="min-w-[240px] flex-1">
-                        <ModelPicker className="!h-10 !w-full !min-w-0" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="text" fullWidth onMissingConfig={() => openConfigDialog(true)} />
+                        <ModelPicker className="!h-10 !w-full !min-w-0" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="text" fullWidth showChannel={false} onMissingConfig={() => openConfigDialog(true)} />
                     </div>
                 )}
                 <Button
@@ -265,6 +266,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         model,
         videoModel: mode === "video" ? model : globalConfig.videoModel,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
+        imageQuality: node.metadata?.imageQuality || globalConfig.imageQuality || defaultConfig.imageQuality,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,

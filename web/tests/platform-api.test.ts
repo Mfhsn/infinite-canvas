@@ -27,6 +27,56 @@ describe("platform API client", () => {
         expect(getPlatformSessionBinding()).toBe("host-binding");
     });
 
+    test("bootstraps a projectless server session without inventing a project id", async () => {
+        let request: { input: string; init?: RequestInit } | undefined;
+        const context: PlatformContext = { ...platformContext(), localProjectId: null, externalProjectId: null };
+        globalThis.fetch = (async (input, init) => {
+            request = { input: String(input), init };
+            return Response.json(context, { headers: { [CANVAS_SESSION_BINDING_HEADER]: "projectless-binding" } });
+        }) as typeof fetch;
+
+        expect(await platformApi.bootstrapSession({ externalToken: "host-token", refreshToken: null, externalProjectId: null })).toEqual(context);
+        expect(JSON.parse(String(request?.init?.body))).toEqual({ externalToken: "host-token", refreshToken: null, externalProjectId: null });
+        expect(getPlatformSessionBinding()).toBe("projectless-binding");
+    });
+
+    test("lists and creates onboarding projects with the fixed empty-skill contract", async () => {
+        const calls: Array<{ input: string; init?: RequestInit }> = [];
+        const responses = [
+            Response.json({ projects: [{ project_id: "one", name: "One", points: 1, permission_ids: [2] }] }),
+            Response.json({
+                project: { project_id: "created", name: "Canvas project", points: 0, permission_ids: [] },
+                projects: [
+                    { project_id: "one", name: "One" },
+                    { project_id: "created", name: "Canvas project" },
+                ],
+            }),
+        ];
+        globalThis.fetch = (async (input, init) => {
+            calls.push({ input: String(input), init });
+            return responses.shift()!;
+        }) as typeof fetch;
+
+        expect(await platformApi.listOnboardingProjects("host-token")).toEqual([{ projectId: "one", name: "One", points: 1, permissionIds: [2] }]);
+        expect(await platformApi.createOnboardingProject("host-token", { name: "Canvas project", content: " Brief " })).toEqual({
+            project: { projectId: "created", name: "Canvas project", points: 0, permissionIds: [] },
+            projects: [
+                { projectId: "one", name: "One", points: null, permissionIds: [] },
+                { projectId: "created", name: "Canvas project", points: null, permissionIds: [] },
+            ],
+        });
+        expect(calls.map((call) => call.input)).toEqual(["/api/platform/onboarding/projects/list", "/api/platform/onboarding/projects/create"]);
+        expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ externalToken: "host-token" });
+        expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({
+            externalToken: "host-token",
+            name: "Canvas project",
+            content: "Brief",
+            tag: "canvas",
+            skill: [],
+            skill_model: [],
+        });
+    });
+
     test("uses same-origin cookie credentials and JSON for login", async () => {
         let request: { input: string; init?: RequestInit } | undefined;
         const context = platformContext();
@@ -69,9 +119,7 @@ describe("platform API client", () => {
         }) as typeof fetch;
 
         expect(await platformApi.listProjects()).toEqual([{ projectId: "7", name: "Seven", points: 12, permissionIds: [1, 2] }]);
-        expect(await platformApi.createProject({ name: "New project", content: "Brief", tag: "design", skill: [0, 2], skillModel: ["model-a"] })).toEqual([
-            { projectId: "new", name: "New project", points: 0, permissionIds: [] },
-        ]);
+        expect(await platformApi.createProject({ name: "New project", content: "Brief", tag: "design", skill: [0, 2], skillModel: ["model-a"] })).toEqual([{ projectId: "new", name: "New project", points: 0, permissionIds: [] }]);
         expect(calls[0]?.input).toBe("/api/platform/projects");
         expect(calls[1]?.input).toBe("/api/platform/projects");
         expect(calls[2]?.input).toBe("/api/platform/projects");
@@ -93,18 +141,14 @@ describe("platform API client", () => {
     });
 
     test("drops malformed project records", () => {
-        expect(normalizePlatformProjects([{ id: "ok", name: "OK", points: Number.POSITIVE_INFINITY, permissionIds: [1, "2"] }, { name: "missing id" }])).toEqual([
-            { projectId: "ok", name: "OK", points: null, permissionIds: [1] },
-        ]);
+        expect(normalizePlatformProjects([{ id: "ok", name: "OK", points: Number.POSITIVE_INFINITY, permissionIds: [1, "2"] }, { name: "missing id" }])).toEqual([{ projectId: "ok", name: "OK", points: null, permissionIds: [1] }]);
     });
 
     test("captures response binding and sends it on following requests", async () => {
         const requests: RequestInit[] = [];
         globalThis.fetch = (async (_input, init) => {
             requests.push(init || {});
-            return requests.length === 1
-                ? Response.json(platformContext(), { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding/login+1" } })
-                : Response.json(platformContext());
+            return requests.length === 1 ? Response.json(platformContext(), { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding/login+1" } }) : Response.json(platformContext());
         }) as typeof fetch;
 
         await platformApi.login("alice", "secret");
@@ -118,10 +162,7 @@ describe("platform API client", () => {
     });
 
     test("clears binding after a successful logout", async () => {
-        const responses = [
-            Response.json(platformContext(), { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding-1" } }),
-            Response.json({ ok: true }),
-        ];
+        const responses = [Response.json(platformContext(), { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding-1" } }), Response.json({ ok: true })];
         globalThis.fetch = (async () => responses.shift()!) as typeof fetch;
 
         await platformApi.getContext();

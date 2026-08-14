@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { HttpBlobRepository, HttpDocumentRepository } from "@/services/storage/http-repository";
-import { CANVAS_SESSION_BINDING_HEADER, capturePlatformSessionBinding, clearPlatformSessionBinding } from "@/services/platform-session";
+import { CANVAS_SESSION_BINDING_HEADER, appendPlatformSessionBinding, capturePlatformSessionBinding, clearPlatformSessionBinding } from "@/services/platform-session";
 
 const originalFetch = globalThis.fetch;
 
@@ -52,6 +52,50 @@ describe("HTTP storage repositories", () => {
         expect(new Headers(request?.headers).get(CANVAS_SESSION_BINDING_HEADER)).toBe("session/value+1");
         expect(request?.credentials).toBe("include");
         expect(url).toBe("/api/storage/blobs/video%3Ademo?session_binding=session%2Fvalue%2B1");
+    });
+
+    test("replaces a stale binding without duplicating query parameters", () => {
+        capturePlatformSessionBinding(new Response(null, { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding-new" } }));
+
+        expect(appendPlatformSessionBinding("/api/storage/blobs/image%3Ademo?download=1&session_binding=binding-old#preview")).toBe("/api/storage/blobs/image%3Ademo?download=1&session_binding=binding-new#preview");
+    });
+
+    test("recovers a rotated session binding and retries the storage request once", async () => {
+        capturePlatformSessionBinding(new Response(null, { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding-old" } }));
+        const calls: Array<{ url: string; binding: string | null }> = [];
+        globalThis.fetch = (async (input, init) => {
+            const url = String(input);
+            const binding = new Headers(init?.headers).get(CANVAS_SESSION_BINDING_HEADER);
+            calls.push({ url, binding });
+            if (url === "/api/platform/context") {
+                return Response.json({ authenticated: true }, { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding-new" } });
+            }
+            if (calls.filter((call) => call.url.includes("/api/storage/blobs/")).length === 1) {
+                return new Response(null, { status: 403 });
+            }
+            return new Response(null, { status: 200 });
+        }) as typeof fetch;
+
+        const url = await new HttpBlobRepository().resolveUrl("image:demo");
+
+        expect(calls).toEqual([
+            { url: "/api/storage/blobs/image%3Ademo", binding: "binding-old" },
+            { url: "/api/platform/context", binding: null },
+            { url: "/api/storage/blobs/image%3Ademo", binding: "binding-new" },
+        ]);
+        expect(url).toBe("/api/storage/blobs/image%3Ademo?session_binding=binding-new");
+    });
+
+    test("does not recover unrelated non-HEAD forbidden responses", async () => {
+        capturePlatformSessionBinding(new Response(null, { headers: { [CANVAS_SESSION_BINDING_HEADER]: "binding-old" } }));
+        const calls: string[] = [];
+        globalThis.fetch = (async (input) => {
+            calls.push(String(input));
+            return Response.json({ error: { code: "forbidden", message: "Forbidden" } }, { status: 403 });
+        }) as typeof fetch;
+
+        await expect(new HttpBlobRepository().get("image:demo")).rejects.toMatchObject({ status: 403, code: "forbidden" });
+        expect(calls).toEqual(["/api/storage/blobs/image%3Ademo"]);
     });
 
     test("reset clears remembered revisions", async () => {

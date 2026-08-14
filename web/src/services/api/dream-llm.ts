@@ -1,7 +1,8 @@
 import axios from "axios";
 
-import { ENV_AI_LLM_PLATFORM_CODE, ENV_AI_LLM_URL } from "@/constant/env";
+import { ENV_AI_LLM_MAX_COMPLETION_TOKENS, ENV_AI_LLM_URL, ENV_AI_PLATFORM_ID } from "@/constant/env";
 import { AppError, requestError } from "@/lib/app-error";
+import { dreamProjectRequestFields } from "@/services/api/dream";
 import { DREAM_API_PROXY_PATH } from "@/services/api/dream-media";
 import { hasPlatformSessionBinding, platformSessionBindingHeaders } from "@/services/platform-session";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
@@ -23,9 +24,11 @@ export async function requestDreamLlmChat(config: AiConfig, messages: ResponseIn
     const response = await axios.post<DreamLlmEnvelope>(
         dreamLlmApiUrl(),
         {
-            project_id: 0,
-            platform_code: ENV_AI_LLM_PLATFORM_CODE,
+            ...dreamProjectRequestFields(),
+            platform_code: "ucloud",
+            platform_id: ENV_AI_PLATFORM_ID,
             model_code: modelOptionName(config.model || config.textModel),
+            max_completion_tokens: ENV_AI_LLM_MAX_COMPLETION_TOKENS,
             messages: toDreamLlmMessages(messages),
             ...dreamLlmToolOptions(options?.tools || [], options?.toolChoice || "auto"),
         },

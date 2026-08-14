@@ -91,6 +91,7 @@ test('configuration rejects unknown drivers instead of silently changing storage
   assert.throws(() => loadConfig({ DATA_STORAGE_DRIVER: 'typo' }), /browser or mysql/);
   assert.equal(loadConfig({}).maxFileBytes, 128 * 1024 * 1024);
   assert.equal(loadConfig({}).maxDocumentBytes, 16 * 1024 * 1024);
+  assert.equal(loadConfig({}).integration.sourceSystem, 'multi_user_platform');
   assert.equal(loadConfig({ INTEGRATION_EXTERNAL_PROJECT_ID: ' project-42 ' }).integration.externalProjectId, 'project-42');
   assert.equal(loadConfig({ VITE_APP_BASE_PATH: ' /infinite-canvas ' }).appBasePath, '/infinite-canvas/');
   assert.throws(() => loadConfig({ VITE_APP_BASE_PATH: 'https://example.com/canvas' }), /absolute URL path/);
@@ -118,6 +119,81 @@ test('nested platform responses never confuse project ids with user ids', () => 
   assert.equal(first.uid, 'user-42');
   assert.equal(first.externalProjectId, 'shared-project');
   assert.notEqual(deriveStorageNamespace(first), deriveStorageNamespace(second));
+});
+
+test('projectless platform contexts remain authenticated and use user-scoped namespaces', () => {
+  const config = integrationConfig();
+  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  const first = parsePlatformContext({
+    uid: 'user-42',
+    username: 'alice',
+    current_points: 10,
+    source_system: 'projectless-platform',
+    expires_at: expiresAt,
+  }, config);
+  const sameIdentity = { ...first };
+  const otherUser = { ...first, uid: 'user-84' };
+  const projectScoped = { ...first, localProjectId: 9, externalProjectId: 'project-9' };
+
+  assert.equal(first.localProjectId, null);
+  assert.equal(first.externalProjectId, null);
+  assert.equal(deriveStorageNamespace(first), deriveStorageNamespace(sameIdentity));
+  assert.notEqual(deriveStorageNamespace(first), deriveStorageNamespace(otherUser));
+  assert.notEqual(deriveStorageNamespace(first), deriveStorageNamespace(projectScoped));
+  assert.throws(() => parsePlatformContext({
+    uid: 'user-42',
+    username: 'alice',
+    local_project_id: 'invalid',
+    source_system: 'projectless-platform',
+    expires_at: expiresAt,
+  }, config), /local project context/);
+});
+
+test('Integration client resolves and sends the first accessible project id when none is supplied', async () => {
+  const captured = [];
+  const upstream = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    captured.push({ method: request.method, url: request.url, body: Buffer.concat(chunks).toString('utf8') });
+    const payload = request.url === '/api/integration/external/projects'
+      ? { data: [{ project_id: 'project-1', name: 'Project One' }] }
+      : request.url === '/api/integration/session/exchange'
+      ? { data: {
+        local_token: 'local-token', uid: 'project-user', username: 'alice', nickname: 'Alice',
+        local_project_id: 101, external_project_id: 'project-1',
+        source_system: 'project-platform', expires_at: new Date(Date.now() + 60_000).toISOString(),
+      } }
+      : request.url === '/api/integration/external/profile'
+        ? { data: { id: 'project-user', username: 'alice', points: 25 } }
+        : null;
+    if (payload === null) {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(payload));
+  });
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  const port = upstream.address().port;
+  const client = new HttpIntegrationClient(integrationConfig({ baseUrl: `http://127.0.0.1:${port}` }));
+  try {
+    const result = await client.exchange('external-token');
+    assert.equal(result.context.localProjectId, 101);
+    assert.equal(result.context.externalProjectId, 'project-1');
+    assert.equal(result.context.currentPoints, 25);
+    assert.equal(result.localToken, 'local-token');
+  } finally {
+    await new Promise((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
+  }
+
+  assert.deepEqual(captured.map(({ method, url }) => ({ method, url })), [
+    { method: 'GET', url: '/api/integration/external/projects' },
+    { method: 'POST', url: '/api/integration/session/exchange' },
+    { method: 'GET', url: '/api/integration/external/profile' },
+  ]);
+  assert.deepEqual(JSON.parse(captured[1].body), {
+    external_token: 'external-token', external_project_id: 'project-1',
+  });
 });
 
 test('Integration client preserves safe upstream permission and validation statuses', async () => {
@@ -573,8 +649,7 @@ test('platform login, exchange, context and logout keep all upstream tokens serv
   assert.equal(captured[2].externalToken, 'external-secret');
   assert.equal(captured[2].authorization, 'Bearer external-secret');
   assert.deepEqual(JSON.parse(captured[2].body), {
-    external_token: 'external-secret',
-    external_project_id: 'project-x',
+    external_token: 'external-secret', external_project_id: 'project-x',
   });
   assert.equal(captured[3].externalToken, 'external-secret');
   assert.equal(captured[3].authorization, undefined);
@@ -799,6 +874,89 @@ test('registration and platform project routes enforce binding, keep tokens serv
     assert.equal(request.externalToken, 'server-external-secret');
     assert.equal(request.authorization, undefined);
   }
+});
+
+test('project onboarding lists and creates projects before a canvas session exists', async () => {
+  const config = integrationConfig();
+  const calls = [];
+  let rejectProjects = false;
+  let projects = [
+    { projectId: 'existing-project', name: 'Existing', points: 10, permissionIds: [1] },
+  ];
+  const client = {
+    listProjects: async (externalToken) => {
+      calls.push({ operation: 'list', externalToken });
+      if (rejectProjects) throw new HttpError(401, 'invalid_credentials', 'Platform authentication failed');
+      return structuredClone(projects);
+    },
+    createProject: async (externalToken, input) => {
+      calls.push({ operation: 'create', externalToken, input: structuredClone(input) });
+      projects = [...projects, { projectId: 'created-project', name: input.name, points: 0, permissionIds: [] }];
+      return null;
+    },
+  };
+  const integration = {
+    config,
+    client,
+    sessions: new IntegrationSessionService(config, new MemoryIntegrationSessionRepository()),
+  };
+
+  await withServer(baseConfig({ integration: config }), createMemoryRepositories(), async (base) => {
+    let response = await fetch(`${base}/api/platform/onboarding/projects/list`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ externalToken: 'external-secret' }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { projects: [
+      { projectId: 'existing-project', name: 'Existing', points: 10, permissionIds: [1] },
+    ] });
+
+    response = await fetch(`${base}/api/platform/onboarding/projects/list`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        origin: 'https://attacker.invalid',
+        'sec-fetch-site': 'cross-site',
+      },
+      body: JSON.stringify({ externalToken: 'external-secret' }),
+    });
+    assert.equal(response.status, 403);
+
+    response = await fetch(`${base}/api/platform/onboarding/projects/create`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        externalToken: 'external-secret',
+        name: 'Canvas project',
+        content: null,
+        tag: 'canvas',
+        skill: [],
+        skill_model: [],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const created = await response.json();
+    assert.deepEqual(created.project, { projectId: 'created-project', name: 'Canvas project', points: 0, permissionIds: [] });
+    assert.equal(created.projects.length, 2);
+    assert.doesNotMatch(JSON.stringify(created), /external-secret/);
+
+    const createCall = calls.find((call) => call.operation === 'create');
+    assert.deepEqual(createCall, {
+      operation: 'create',
+      externalToken: 'external-secret',
+      input: { name: 'Canvas project', content: null, tag: 'canvas', skill: [], skillModel: [] },
+    });
+
+    rejectProjects = true;
+    response = await fetch(`${base}/api/platform/onboarding/projects/list`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ externalToken: 'expired-secret' }),
+    });
+    assert.equal(response.status, 401);
+    assert.doesNotMatch(await response.text(), /expired-secret/);
+  }, integration);
 });
 
 test('integration sessions isolate storage and Dream requests by binding', async () => {
@@ -1036,6 +1194,48 @@ test('host-platform bootstrap rotates credentials once and reuses an equivalent 
   }, integration);
 });
 
+test('host-platform bootstrap delegates a missing project id to the integration client resolver', async () => {
+  const config = integrationConfig();
+  const context = platformContext('resolved-bootstrap', 55, { externalProjectId: 'external-55' });
+  const captured = [];
+  const client = {
+    exchange: async (externalToken, externalProjectId) => {
+      captured.push({ externalToken, externalProjectId });
+      return { context, localToken: 'local-resolved' };
+    },
+    current: async () => context,
+    logout: async () => {},
+  };
+  const sessions = new IntegrationSessionService(config, new MemoryIntegrationSessionRepository());
+  const integration = { config, client, sessions };
+
+  await withServer(baseConfig({ integration: config }), createMemoryRepositories(), async (base) => {
+    let response = await fetch(`${base}/api/platform/session/bootstrap`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ externalToken: 'external-resolved', refreshToken: null, externalProjectId: null }),
+    });
+    assert.equal(response.status, 200);
+    const cookie = cookieFrom(response);
+    const binding = bindingFrom(response);
+    assert.ok(cookie);
+    assert.ok(binding);
+    assert.deepEqual(await response.json(), context);
+
+    response = await fetch(`${base}/api/platform/context`, {
+      headers: { cookie, 'x-canvas-session-binding': binding },
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).externalProjectId, 'external-55');
+
+    response = await fetch(`${base}/api/storage/config`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).authenticated, true);
+  }, integration);
+
+  assert.deepEqual(captured, [{ externalToken: 'external-resolved', externalProjectId: undefined }]);
+});
+
 test('host-platform bootstrap falls back from a stale host project id', async () => {
   const config = integrationConfig();
   const context = platformContext('fallback-user', 55, { externalProjectId: 'external-55' });
@@ -1043,7 +1243,7 @@ test('host-platform bootstrap falls back from a stale host project id', async ()
   const client = {
     exchange: async (externalToken, externalProjectId) => {
       captured.push({ externalToken, externalProjectId });
-      if (externalProjectId === 'stale-project') throw new HttpError(502, 'integration_error', 'Platform request failed (upstream 500)');
+      if (externalProjectId === 'stale-project') throw new HttpError(502, 'integration_error', 'Platform request failed (upstream 502)');
       return { context, localToken: 'local-fallback' };
     },
     current: async () => context,
@@ -1226,6 +1426,9 @@ test('identity validation, canonical namespaces and cross-site POST checks fail 
 
   const validationSessions = new IntegrationSessionService(integrationConfig(), new MemoryIntegrationSessionRepository());
   const responseStub = { setHeader() {} };
+  await assert.doesNotReject(
+    validationSessions.create(responseStub, platformContext('projectless', null, { externalProjectId: null }), { localToken: 'token' }),
+  );
   await assert.rejects(
     validationSessions.create(responseStub, platformContext('x', 1, { sourceSystem: '' }), { localToken: 'token' }),
     /invalid source system/,

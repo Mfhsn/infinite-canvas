@@ -61,7 +61,7 @@ export interface PlatformContext {
   nickname: string;
   permissionIds: number[];
   currentPoints: number | null;
-  localProjectId: number;
+  localProjectId: number | null;
   externalProjectId: string | null;
   sourceSystem: string;
   expiresAt: string;

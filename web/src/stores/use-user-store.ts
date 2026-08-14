@@ -1,14 +1,16 @@
 import { create } from "zustand";
 
 import { hydrateSessionData } from "@/stores/session-data-hydration";
-import { platformApi, PlatformApiError, type PlatformContext } from "@/services/api/platform";
-import { clearHostPlatformSession, readHostPlatformSession, subscribeToHostPlatformSessionChanges, writeHostCurrentProjectId } from "@/services/host-platform-session";
+import { platformApi, PlatformApiError, type CreateOnboardingProjectInput, type OnboardingProjectCreateResult, type PlatformContext, type PlatformProject } from "@/services/api/platform";
+import { clearHostCurrentProjectId, clearHostPlatformSession, readHostPlatformSession, subscribeToHostPlatformSessionChanges, writeHostCurrentProjectId } from "@/services/host-platform-session";
 import { clearPlatformSessionBinding, subscribeToPlatformSessionChanges } from "@/services/platform-session";
 import { resetStorageRuntime } from "@/services/storage/runtime";
 import { usePlatformProjectStore } from "@/stores/use-platform-project-store";
 import { clearPersistedAiCredentials } from "@/stores/use-config-store";
+import { redirectToPlatformLogin } from "@/lib/platform-navigation";
 
-export type UserStatus = "disabled" | "initializing" | "anonymous" | "authenticated" | "error";
+export type UserStatus = "disabled" | "initializing" | "project_required" | "anonymous" | "authenticated" | "error";
+export type OnboardingProjectLoadStatus = "idle" | "loading" | "success" | "error";
 
 export type LocalUser = {
     id: string;
@@ -38,7 +40,15 @@ type UserStore = {
     currentPoints: number | null;
     projectContext: ProjectContext | null;
     error: string | null;
+    onboardingProjects: PlatformProject[];
+    onboardingLoadStatus: OnboardingProjectLoadStatus;
+    onboardingCreating: boolean;
+    onboardingSelectingProjectId: string | null;
+    onboardingError: string | null;
     initialize: () => Promise<void>;
+    loadOnboardingProjects: () => Promise<PlatformProject[]>;
+    createOnboardingProject: (input: CreateOnboardingProjectInput) => Promise<OnboardingProjectCreateResult>;
+    selectOnboardingProject: (projectId: string) => Promise<void>;
     refreshPoints: () => Promise<number | null>;
     logout: () => Promise<void>;
     handleUnauthorized: () => void;
@@ -53,6 +63,22 @@ const emptySessionState = {
     currentPoints: null,
     projectContext: null,
     error: null,
+};
+
+type EmptyOnboardingState = {
+    onboardingProjects: PlatformProject[];
+    onboardingLoadStatus: OnboardingProjectLoadStatus;
+    onboardingCreating: boolean;
+    onboardingSelectingProjectId: string | null;
+    onboardingError: string | null;
+};
+
+const emptyOnboardingState: EmptyOnboardingState = {
+    onboardingProjects: [] as PlatformProject[],
+    onboardingLoadStatus: "idle" as OnboardingProjectLoadStatus,
+    onboardingCreating: false,
+    onboardingSelectingProjectId: null,
+    onboardingError: null,
 };
 
 export function authenticatedUserState(context: PlatformContext): AuthenticatedUserState {
@@ -110,12 +136,54 @@ function resetSessionClientState(clearBinding = false) {
     resetStorageRuntime();
 }
 
+async function clearCanvasSessionAndRedirect() {
+    try {
+        await platformApi.clearSession();
+    } catch {
+        // Redirect remains authoritative when stale-session cleanup is temporarily unavailable.
+    }
+    useUserStore.getState().handleUnauthorized();
+}
+
+function requireHostPlatformSession() {
+    const hostSession = readHostPlatformSession();
+    if (hostSession) return hostSession;
+    useUserStore.getState().handleUnauthorized();
+    throw new Error("Host platform session is unavailable");
+}
+
+async function hydrateAuthenticatedSession(context: PlatformContext) {
+    if (!context.externalProjectId || context.localProjectId === null) {
+        throw new Error("Platform project context is incomplete");
+    }
+    writeHostCurrentProjectId(context.externalProjectId);
+    resetStorageRuntime();
+    try {
+        await hydrateSessionData();
+    } catch (error) {
+        throw initializationStageError("Canvas data loading", error);
+    }
+    return { ...authenticatedUserState(context), ...emptyOnboardingState };
+}
+
+function projectRequiredState(projects: PlatformProject[], overrides: Partial<typeof emptyOnboardingState> = {}) {
+    return {
+        status: "project_required" as const,
+        ...emptySessionState,
+        ...emptyOnboardingState,
+        onboardingProjects: projects,
+        onboardingLoadStatus: "success" as const,
+        ...overrides,
+    };
+}
+
 export const useUserStore = create<UserStore>()((set, get) => ({
     status: "initializing",
     ...emptySessionState,
+    ...emptyOnboardingState,
     initialize: async () => {
         usePlatformProjectStore.getState().clear();
-        set({ status: "initializing", ...emptySessionState });
+        set({ status: "initializing", ...emptySessionState, ...emptyOnboardingState });
         try {
             let config;
             try {
@@ -125,35 +193,113 @@ export const useUserStore = create<UserStore>()((set, get) => ({
             }
             if (!config.enabled) {
                 await hydrateSessionData();
-                set({ status: "disabled", ...emptySessionState });
+                set({ status: "disabled", ...emptySessionState, ...emptyOnboardingState });
                 return;
             }
             clearPersistedAiCredentials();
+            const enterProjectRequired = async (externalToken: string) => {
+                set(projectRequiredState([], { onboardingLoadStatus: "loading" }));
+                try {
+                    const projects = await platformApi.listOnboardingProjects(externalToken);
+                    set(projectRequiredState(projects));
+                } catch (error) {
+                    if (error instanceof PlatformApiError && error.status === 401) {
+                        get().handleUnauthorized();
+                        return;
+                    }
+                    set(
+                        projectRequiredState([], {
+                            onboardingLoadStatus: "error",
+                            onboardingError: errorMessage(error),
+                        }),
+                    );
+                }
+            };
             const hostSession = readHostPlatformSession();
             if (!hostSession) {
-                await platformApi.clearSession().catch(() => undefined);
-                get().handleUnauthorized();
+                await clearCanvasSessionAndRedirect();
+                return;
+            }
+            if (!hostSession.externalProjectId) {
+                await enterProjectRequired(hostSession.externalToken);
                 return;
             }
             try {
                 const context = await platformApi.bootstrapSession(hostSession);
-                if (context.externalProjectId) writeHostCurrentProjectId(context.externalProjectId);
-                try {
-                    await hydrateSessionData();
-                } catch (error) {
-                    throw initializationStageError("Canvas data loading", error);
-                }
-                set(authenticatedUserState(context));
+                set(await hydrateAuthenticatedSession(context));
             } catch (error) {
                 if (error instanceof PlatformApiError && error.status === 401) {
                     get().handleUnauthorized();
+                    return;
+                }
+                if (error instanceof PlatformApiError && error.code === "platform_project_unavailable") {
+                    clearHostCurrentProjectId();
+                    await enterProjectRequired(hostSession.externalToken);
                     return;
                 }
                 if (error instanceof Error && error.message.startsWith("Canvas data loading:")) throw error;
                 throw initializationStageError("Platform session bootstrap", error);
             }
         } catch (error) {
-            set({ status: "error", ...emptySessionState, error: errorMessage(error) });
+            set({ status: "error", ...emptySessionState, ...emptyOnboardingState, error: errorMessage(error) });
+        }
+    },
+    loadOnboardingProjects: async () => {
+        const hostSession = requireHostPlatformSession();
+        set((state) => ({
+            status: "project_required",
+            onboardingLoadStatus: "loading",
+            onboardingError: null,
+            onboardingProjects: state.onboardingProjects,
+        }));
+        try {
+            const projects = await platformApi.listOnboardingProjects(hostSession.externalToken);
+            set(projectRequiredState(projects));
+            return projects;
+        } catch (error) {
+            if (error instanceof PlatformApiError && error.status === 401) get().handleUnauthorized();
+            else
+                set((state) => ({
+                    status: "project_required",
+                    onboardingLoadStatus: "error",
+                    onboardingError: errorMessage(error),
+                    onboardingProjects: state.onboardingProjects,
+                }));
+            throw error;
+        }
+    },
+    createOnboardingProject: async (input) => {
+        const hostSession = requireHostPlatformSession();
+        set({ status: "project_required", onboardingCreating: true, onboardingError: null });
+        try {
+            const result = await platformApi.createOnboardingProject(hostSession.externalToken, input);
+            set(projectRequiredState(result.projects));
+            return result;
+        } catch (error) {
+            if (error instanceof PlatformApiError && error.status === 401) get().handleUnauthorized();
+            else set({ status: "project_required", onboardingCreating: false, onboardingError: errorMessage(error) });
+            throw error;
+        }
+    },
+    selectOnboardingProject: async (projectId) => {
+        const hostSession = requireHostPlatformSession();
+        set({ status: "project_required", onboardingSelectingProjectId: projectId, onboardingError: null });
+        try {
+            const context = await platformApi.bootstrapSession({ ...hostSession, externalProjectId: projectId });
+            if (context.externalProjectId !== projectId) throw new Error("Platform selected a different project");
+            set(await hydrateAuthenticatedSession(context));
+        } catch (error) {
+            if (error instanceof PlatformApiError && error.status === 401) get().handleUnauthorized();
+            else {
+                resetStorageRuntime();
+                set({
+                    status: "project_required",
+                    ...emptySessionState,
+                    onboardingSelectingProjectId: null,
+                    onboardingError: errorMessage(error),
+                });
+            }
+            throw error;
         }
     },
     refreshPoints: async () => {
@@ -161,12 +307,13 @@ export const useUserStore = create<UserStore>()((set, get) => ({
         if (snapshot.status !== "authenticated" || !snapshot.profile || !snapshot.projectContext) return snapshot.currentPoints;
         if (pointsRefreshPromise) return pointsRefreshPromise;
         const expectedUid = snapshot.profile.uid;
-        const expectedProjectId = snapshot.projectContext.externalProjectId;
+        const expectedSourceSystem = snapshot.projectContext.sourceSystem;
+        const expectedLocalProjectId = snapshot.projectContext.localProjectId;
         pointsRefreshPromise = platformApi
             .getContext()
             .then((context) => {
                 const current = get();
-                if (current.status === "authenticated" && current.profile?.uid === expectedUid && current.projectContext?.externalProjectId === expectedProjectId) {
+                if (current.status === "authenticated" && current.profile?.uid === expectedUid && current.projectContext?.sourceSystem === expectedSourceSystem && current.projectContext?.localProjectId === expectedLocalProjectId) {
                     set({ currentPoints: context.currentPoints });
                 }
                 return context.currentPoints;
@@ -184,27 +331,32 @@ export const useUserStore = create<UserStore>()((set, get) => ({
         await platformApi.logout();
         clearHostPlatformSession();
         usePlatformProjectStore.getState().clear();
-        set({ status: "initializing", ...emptySessionState });
+        set({ status: "initializing", ...emptySessionState, ...emptyOnboardingState });
         resetSessionClientState(true);
         reloadPage();
     },
     handleUnauthorized: () => {
         usePlatformProjectStore.getState().clear();
         resetSessionClientState(true);
-        set({ status: "anonymous", ...emptySessionState });
+        set({ status: "anonymous", ...emptySessionState, ...emptyOnboardingState });
+        redirectToPlatformLogin();
     },
 }));
 
 subscribeToPlatformSessionChanges(() => {
     usePlatformProjectStore.getState().clear();
-    useUserStore.setState({ status: "initializing", ...emptySessionState });
+    useUserStore.setState({ status: "initializing", ...emptySessionState, ...emptyOnboardingState });
     resetSessionClientState(true);
     reloadPage();
 });
 
 subscribeToHostPlatformSessionChanges(() => {
+    if (!readHostPlatformSession()) {
+        void clearCanvasSessionAndRedirect();
+        return;
+    }
     usePlatformProjectStore.getState().clear();
-    useUserStore.setState({ status: "initializing", ...emptySessionState });
+    useUserStore.setState({ status: "initializing", ...emptySessionState, ...emptyOnboardingState });
     resetSessionClientState(true);
     reloadPage();
 });

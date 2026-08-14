@@ -3,6 +3,7 @@ import { Alert, Button, Card, Spin, Typography } from "antd";
 import { RefreshCw } from "lucide-react";
 
 import { useI18n } from "@/i18n/use-i18n";
+import { PlatformProjectOnboarding } from "@/components/layout/platform-project-onboarding";
 import { publicAssetPath } from "@/lib/app-base-path";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -13,6 +14,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const initialize = useUserStore((state) => state.initialize);
 
     if (status === "disabled" || status === "authenticated") return <>{children}</>;
+    if (status === "project_required") return <PlatformProjectOnboarding />;
 
     if (status === "initializing") {
         return (
@@ -26,10 +28,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         <div className="flex min-h-dvh items-center justify-center bg-background p-4 text-foreground">
             <Card className="w-full max-w-md" styles={{ body: { padding: 32 } }}>
                 <div className="mb-6 flex items-center gap-3">
-                    <span
-                        className="size-9 shrink-0 bg-current"
-                        style={{ mask: `url(${publicAssetPath("logo.svg")}) center / contain no-repeat`, WebkitMask: `url(${publicAssetPath("logo.svg")}) center / contain no-repeat` }}
-                    />
+                    <span className="size-9 shrink-0 bg-current" style={{ mask: `url(${publicAssetPath("logo.svg")}) center / contain no-repeat`, WebkitMask: `url(${publicAssetPath("logo.svg")}) center / contain no-repeat` }} />
                     <div className="min-w-0">
                         <Typography.Title level={3} style={{ margin: 0 }}>
                             {t("auth.platformSessionTitle")}

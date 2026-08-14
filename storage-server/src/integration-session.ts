@@ -211,7 +211,9 @@ function identityTuple(context: PlatformContext): string {
 function assertIdentity(context: PlatformContext): void {
   if (typeof context.uid !== 'string' || !context.uid.trim()) throw new HttpError(502, 'invalid_integration_response', 'Platform response has invalid uid');
   if (typeof context.sourceSystem !== 'string' || !context.sourceSystem.trim()) throw new HttpError(502, 'invalid_integration_response', 'Platform response has invalid source system');
-  if (!Number.isSafeInteger(context.localProjectId)) throw new HttpError(502, 'invalid_integration_response', 'Platform response has invalid local project context');
+  if (context.localProjectId !== null && !Number.isSafeInteger(context.localProjectId)) {
+    throw new HttpError(502, 'invalid_integration_response', 'Platform response has invalid local project context');
+  }
 }
 
 function tokenAad(sessionIdHash: string, tokenKind: TokenKind): Buffer {

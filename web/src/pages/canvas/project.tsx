@@ -22,6 +22,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { createCanvasCoverBlob, createCanvasCoverKey, selectCanvasCoverCandidate, type CanvasCoverCandidate } from "@/lib/canvas/canvas-cover";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
+import { getVerticalViewportCorrection } from "@/lib/canvas/canvas-panel-position";
 import { App, Button, Dropdown, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
 import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
@@ -75,7 +76,7 @@ import type { ReferenceAudio } from "@/types/media";
 import { useI18n } from "@/i18n/use-i18n";
 import { defaultDreamVideoMode, dreamOmniReferenceIssue, isBuiltInDreamVideoConfig, normalizeDreamVideoMode } from "@/lib/seedance-video";
 import { getBlobRepository } from "@/services/storage/runtime";
-import { buildDreamImagePointsSpec, buildDreamVideoPointsSpec } from "@/lib/dream-points";
+import { buildDreamImagePointsSpec, buildDreamTextPointsSpec, buildDreamVideoPointsSpec } from "@/lib/dream-points";
 import { dreamPointsEstimateQueryOptions } from "@/hooks/use-generation-points-estimate";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -571,6 +572,28 @@ function InfiniteCanvasPage() {
     useLayoutEffect(() => {
         selectionBoxRef.current = selectionBox;
     }, [selectionBox]);
+
+    useLayoutEffect(() => {
+        if (!dialogNodeId) return;
+        const container = containerRef.current;
+        const panel = Array.from(container?.querySelectorAll<HTMLElement>("[data-node-editor-panel]") || []).find((element) => element.dataset.nodeEditorPanel === dialogNodeId);
+        if (!container || !panel) return;
+
+        const correctPanelPosition = () => {
+            const containerRect = container.getBoundingClientRect();
+            const panelRect = panel.getBoundingClientRect();
+            const verticalCorrection = getVerticalViewportCorrection(panelRect, containerRect);
+            if (!verticalCorrection) return;
+            const nextViewport = { ...viewportRef.current, y: viewportRef.current.y + verticalCorrection };
+            viewportRef.current = nextViewport;
+            setViewport(nextViewport);
+        };
+
+        correctPanelPosition();
+        const resizeObserver = new ResizeObserver(correctPanelPosition);
+        resizeObserver.observe(panel);
+        return () => resizeObserver.disconnect();
+    }, [dialogNodeId, nodes, size.height]);
 
     useEffect(() => {
         const el = containerRef.current;
@@ -2100,11 +2123,21 @@ function InfiniteCanvasPage() {
         setTitleEditing(false);
     }, [projectId, renameProject, titleDraft]);
 
-    const preventCanvasContextMenu = useCallback((event: ReactMouseEvent) => {
-        if ((event.target as HTMLElement).closest("[data-node-id]")) return;
-        event.preventDefault();
-        setContextMenu(null);
-    }, []);
+    const preventCanvasContextMenu = useCallback(
+        (event: ReactMouseEvent) => {
+            event.preventDefault();
+            const target = event.target instanceof Element ? event.target : null;
+            if (target?.closest("[data-node-id],[data-connection-id]")) return;
+            const position = screenToCanvas(event.clientX, event.clientY);
+            setPendingConnectionCreate(null);
+            setConnecting(null);
+            setDialogNodeId(null);
+            setSelectedNodeIds(new Set());
+            setSelectedConnectionId(null);
+            setContextMenu({ type: "canvas", x: event.clientX, y: event.clientY, position });
+        },
+        [screenToCanvas, setConnecting],
+    );
 
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
@@ -2148,9 +2181,11 @@ function InfiniteCanvasPage() {
             const pointsSpec =
                 mode === "image"
                     ? buildDreamImagePointsSpec(generationConfig, getGenerationCount(generationConfig.count), generationContextDraft.referenceImages.length + (sourceNode?.type === CanvasNodeType.Image && sourceNode.metadata?.content ? 1 : 0))
-                    : mode === "video"
-                      ? buildDreamVideoPointsSpec(generationConfig, { imageCount: generationContextDraft.referenceImages.length, videoCount: generationContextDraft.referenceVideos.length })
-                      : null;
+                    : mode === "text"
+                      ? buildDreamTextPointsSpec(generationConfig, sourceNode?.type === CanvasNodeType.Config ? getGenerationCount(generationConfig.count) : 1)
+                      : mode === "video"
+                        ? buildDreamVideoPointsSpec(generationConfig, { imageCount: generationContextDraft.referenceImages.length, videoCount: generationContextDraft.referenceVideos.length })
+                        : null;
             if (pointsSpec) {
                 try {
                     await queryClient.fetchQuery(dreamPointsEstimateQueryOptions(pointsSpec));
@@ -2510,6 +2545,7 @@ function InfiniteCanvasPage() {
                           ...effectiveConfig,
                           model: savedImageMetadata.model || effectiveConfig.imageModel || effectiveConfig.model,
                           quality: savedImageMetadata.quality || effectiveConfig.quality,
+                          imageQuality: savedImageMetadata.imageQuality || effectiveConfig.imageQuality,
                           size: savedImageMetadata.size || effectiveConfig.size,
                           count: "1",
                       }
@@ -2558,9 +2594,11 @@ function InfiniteCanvasPage() {
             const pointsSpec =
                 node.type === CanvasNodeType.Image
                     ? buildDreamImagePointsSpec(generationConfig, 1, retryImages.length)
-                    : node.type === CanvasNodeType.Video
-                      ? buildDreamVideoPointsSpec(generationConfig, { imageCount: retryImages.length, videoCount: context?.referenceVideos.length || 0 })
-                      : null;
+                    : node.type === CanvasNodeType.Text
+                      ? buildDreamTextPointsSpec(generationConfig, 1)
+                      : node.type === CanvasNodeType.Video
+                        ? buildDreamVideoPointsSpec(generationConfig, { imageCount: retryImages.length, videoCount: context?.referenceVideos.length || 0 })
+                        : null;
             if (pointsSpec) {
                 try {
                     await queryClient.fetchQuery(dreamPointsEstimateQueryOptions(pointsSpec));
@@ -2625,7 +2663,15 @@ function InfiniteCanvasPage() {
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
                 const generationMetadata = savedImageMetadata?.generationType
-                    ? { generationType: savedImageMetadata.generationType, model: generationConfig.model, size: generationConfig.size, quality: generationConfig.quality, count: savedImageMetadata.count || 1, references: savedImageMetadata.references }
+                    ? {
+                          generationType: savedImageMetadata.generationType,
+                          model: generationConfig.model,
+                          size: generationConfig.size,
+                          quality: generationConfig.quality,
+                          imageQuality: generationConfig.imageQuality,
+                          count: savedImageMetadata.count || 1,
+                          references: savedImageMetadata.references,
+                      }
                     : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryImages);
                 setNodes((prev) =>
                     prev.map((item) =>
@@ -2873,7 +2919,6 @@ function InfiniteCanvasPage() {
                             isConnecting={Boolean(connectingParams)}
                             editRequestNonce={editingNodeId === node.id ? editRequestNonce : 0}
                             showPanel={dialogNodeId === node.id && !selectionBox}
-                            panelPlacement={(node.position.y + node.height / 2) * viewport.k + viewport.y > size.height / 2 ? "top" : "bottom"}
                             batchCount={batchChildCountById.get(node.id) || 0}
                             batchExpanded={Boolean(node.metadata?.imageBatchExpanded)}
                             batchClosing={Boolean(node.metadata?.batchRootId && collapsingBatchIds.has(node.metadata.batchRootId))}
@@ -3025,6 +3070,11 @@ function InfiniteCanvasPage() {
                     <CanvasNodeContextMenu
                         menu={contextMenu}
                         onClose={() => setContextMenu(null)}
+                        onCreateNode={(type) => {
+                            if (contextMenu.type !== "canvas") return;
+                            createNode(type, contextMenu.position);
+                            setContextMenu(null);
+                        }}
                         onDuplicate={() => {
                             if (contextMenu.type !== "node") return;
                             duplicateNode(contextMenu.nodeId);
@@ -3033,7 +3083,7 @@ function InfiniteCanvasPage() {
                         onDelete={() => {
                             if (contextMenu.type === "node") {
                                 deleteNodes(new Set([contextMenu.nodeId]));
-                            } else {
+                            } else if (contextMenu.type === "connection") {
                                 deleteConnection(contextMenu.connectionId);
                             }
                             setContextMenu(null);
@@ -3322,6 +3372,7 @@ function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: A
         model: config.model,
         size: config.size,
         quality: config.quality,
+        imageQuality: config.imageQuality,
         count,
         references: references.map(referenceUrl).filter((url): url is string => Boolean(url)),
     };
@@ -3482,6 +3533,7 @@ function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefine
         model,
         videoModel: mode === "video" ? model : config.videoModel,
         quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
+        imageQuality: node?.metadata?.imageQuality || config.imageQuality || defaultConfig.imageQuality,
         size: node?.metadata?.size || config.size || defaultConfig.size,
         videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
         vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,

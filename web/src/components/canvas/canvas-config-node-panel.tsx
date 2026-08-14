@@ -134,6 +134,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputs, onConfigChange,
                     onChange={(model) => onConfigChange(node.id, mode === "video" ? videoModelPatch(model) : { model })}
                     capability={mode}
                     onMissingConfig={() => openConfigDialog(true)}
+                    showChannel={false}
                     fullWidth
                 />
                 {mode === "video" ? (
@@ -222,6 +223,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         model,
         videoModel: mode === "video" ? model : globalConfig.videoModel,
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
+        imageQuality: node.metadata?.imageQuality || globalConfig.imageQuality || defaultConfig.imageQuality,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,

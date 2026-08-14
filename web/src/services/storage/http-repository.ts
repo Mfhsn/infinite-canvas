@@ -1,12 +1,13 @@
 import type { BlobRepository, DocumentBatch, DocumentBatchResult, DocumentRepository, StorageBlobMetadata, StorageDocument, StorageDomain } from "@/services/storage/types";
 import { notifyStorageError, StorageRequestError } from "@/services/storage/types";
-import { appendPlatformSessionBinding, withPlatformSessionBinding } from "@/services/platform-session";
+import { appendPlatformSessionBinding, clearPlatformSessionBinding, withPlatformSessionBinding } from "@/services/platform-session";
 import { appPath } from "@/lib/app-base-path";
 
 const STORAGE_API_BASE = appPath("/api/storage");
 const STORAGE_REQUEST_TIMEOUT_MS = 15_000;
 
 type ErrorBody = { error?: { code?: string; message?: string } };
+let sessionBindingRecovery: Promise<void> | null = null;
 
 async function request(input: string, init?: RequestInit) {
     const response = await storageFetch(`${STORAGE_API_BASE}${input}`, init);
@@ -18,12 +19,17 @@ async function storageFetch(input: RequestInfo | URL, init?: RequestInit) {
     const controller = new AbortController();
     const timer = globalThis.setTimeout(() => controller.abort(), STORAGE_REQUEST_TIMEOUT_MS);
     try {
-        return await fetch(input, {
-            ...init,
-            credentials: "include",
-            headers: withPlatformSessionBinding(init?.headers),
-            signal: controller.signal,
-        });
+        const fetchStorage = () =>
+            fetch(input, {
+                ...init,
+                credentials: "include",
+                headers: withPlatformSessionBinding(init?.headers),
+                signal: controller.signal,
+            });
+        const response = await fetchStorage();
+        if (!(await isSessionBindingMismatch(response, init?.method))) return response;
+        await recoverSessionBinding();
+        return await fetchStorage();
     } catch (error) {
         const resolved = error instanceof Error && error.name === "AbortError" ? new Error("Storage request timed out. Check the storage service and reverse proxy.") : error;
         notifyStorageError(resolved);
@@ -31,6 +37,29 @@ async function storageFetch(input: RequestInfo | URL, init?: RequestInit) {
     } finally {
         globalThis.clearTimeout(timer);
     }
+}
+
+async function isSessionBindingMismatch(response: Response, method?: string) {
+    if (response.status !== 403) return false;
+    if (method?.toUpperCase() === "HEAD") return true;
+    try {
+        const body = (await response.clone().json()) as ErrorBody;
+        return body.error?.code === "session_binding_mismatch";
+    } catch {
+        return false;
+    }
+}
+
+function recoverSessionBinding() {
+    if (sessionBindingRecovery) return sessionBindingRecovery;
+    clearPlatformSessionBinding();
+    sessionBindingRecovery = import("@/services/api/platform")
+        .then(({ platformApi }) => platformApi.getContext())
+        .then(() => undefined)
+        .finally(() => {
+            sessionBindingRecovery = null;
+        });
+    return sessionBindingRecovery;
 }
 
 async function throwResponseError(response: Response): Promise<never> {

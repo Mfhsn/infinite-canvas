@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scissors, Sparkles, Upload, ZoomIn } from "lucide-react";
+import { Brush, Camera, Copy, Grid2x2, Lock, LockOpen, Maximize2, Scissors, Sparkles, Upload, ZoomIn } from "lucide-react";
 
 import type { CanvasNodeData } from "@/types/canvas";
 import type { I18nKey, I18nTranslator } from "@/i18n/messages";
@@ -50,15 +50,6 @@ export const imageToolDefinitions: ImageToolDefinition[] = [
         title: "canvas.tool.copyPromptDesc",
         icon: () => <Copy className="size-4" />,
         run: (node, handlers) => handlers.onCopyPrompt(node),
-    },
-    {
-        id: "reversePrompt",
-        defaultVisible: true,
-        panelLabel: "canvas.tool.reversePrompt",
-        label: "canvas.tool.reversePrompt",
-        title: "canvas.tool.reversePromptDesc",
-        icon: () => <FileText className="size-4" />,
-        run: (node, handlers) => handlers.onReversePrompt(node),
     },
     {
         id: "replace",

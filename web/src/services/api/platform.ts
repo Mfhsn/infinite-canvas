@@ -12,7 +12,7 @@ export type PlatformContext = {
     nickname: string;
     permissionIds: number[];
     currentPoints: number | null;
-    localProjectId: number;
+    localProjectId: number | null;
     externalProjectId: string | null;
     sourceSystem: string;
     expiresAt: string;
@@ -31,6 +31,16 @@ export type CreatePlatformProjectInput = {
     tag: string;
     skill: number[];
     skillModel?: string[];
+};
+
+export type CreateOnboardingProjectInput = {
+    name: string;
+    content?: string | null;
+};
+
+export type OnboardingProjectCreateResult = {
+    project: PlatformProject | null;
+    projects: PlatformProject[];
 };
 
 export type PlatformSessionBootstrapInput = {
@@ -123,15 +133,34 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 function postJson<T>(path: string, body?: unknown, captureBinding = false) {
-    return platformRequest<T>(path, {
-        method: "POST",
-        body: body === undefined ? undefined : JSON.stringify(body),
-    }, captureBinding);
+    return platformRequest<T>(
+        path,
+        {
+            method: "POST",
+            body: body === undefined ? undefined : JSON.stringify(body),
+        },
+        captureBinding,
+    );
 }
 
 export const platformApi = {
     getConfig: () => platformRequest<PlatformConfig>("/api/platform/config"),
     bootstrapSession: (input: PlatformSessionBootstrapInput) => postJson<PlatformContext>("/api/platform/session/bootstrap", input, true),
+    listOnboardingProjects: async (externalToken: string) => normalizePlatformProjects(await postJson<unknown>("/api/platform/onboarding/projects/list", { externalToken })),
+    createOnboardingProject: async (externalToken: string, input: CreateOnboardingProjectInput): Promise<OnboardingProjectCreateResult> => {
+        const result = await postJson<{ project?: unknown; projects?: unknown }>("/api/platform/onboarding/projects/create", {
+            externalToken,
+            name: input.name,
+            content: input.content?.trim() || null,
+            tag: "canvas",
+            skill: [],
+            skill_model: [],
+        });
+        return {
+            project: normalizePlatformProject(result?.project),
+            projects: normalizePlatformProjects(result?.projects),
+        };
+    },
     clearSession: async () => {
         const result = await postJson<{ ok: true }>("/api/platform/session/clear");
         clearPlatformSessionBinding();

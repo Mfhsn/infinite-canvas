@@ -4,7 +4,7 @@ import { Cpu } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { publicAssetPath } from "@/lib/app-base-path";
 import { cn } from "@/lib/utils";
-import { modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { modelOptionDisplayName, modelOptionLabel, modelOptionName, selectableModelsByCapability, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useI18n } from "@/i18n/use-i18n";
 
 type ModelPickerProps = {
@@ -16,15 +16,17 @@ type ModelPickerProps = {
     fullWidth?: boolean;
     placeholder?: string;
     onMissingConfig?: () => void;
+    showChannel?: boolean;
 };
 
-export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder, onMissingConfig }: ModelPickerProps) {
+export function ModelPicker({ config, value, onChange, capability, className, fullWidth = false, placeholder, onMissingConfig, showChannel = true }: ModelPickerProps) {
     const { t } = useI18n();
     const pickerId = useId();
     const [open, setOpen] = useState(false);
     const options = useMemo(() => Array.from(new Set([...(config.channelMode === "local" && !capability ? [value] : []), ...selectableModelsByCapability(config, capability)].filter((model): model is string => Boolean(model)))), [capability, config, value]);
     const current = value || "";
     const resolvedPlaceholder = placeholder || t("modelPicker.placeholder");
+    const displayLabel = (model: string) => (showChannel ? modelOptionLabel(config, model, t) : modelOptionDisplayName(model));
 
     useEffect(() => {
         const closeOtherPicker = (event: Event) => {
@@ -54,10 +56,10 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 )}
                 onMouseDown={(event) => event.stopPropagation()}
                 onPointerDown={(event) => event.stopPropagation()}
-                title={current ? modelOptionLabel(config, current, t) : resolvedPlaceholder}
+                title={current ? displayLabel(current) : resolvedPlaceholder}
             >
                 <ModelIcon model={current} />
-                <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{current ? modelOptionLabel(config, current, t) : resolvedPlaceholder}</span>
+                <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{current ? displayLabel(current) : resolvedPlaceholder}</span>
             </SelectTrigger>
             <SelectContent
                 data-canvas-no-zoom
@@ -71,8 +73,8 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
             >
                 {options.length ? (
                     options.map((model) => (
-                        <SelectItem key={model} value={model} textValue={modelOptionLabel(config, model, t)}>
-                            <ModelLabel config={config} model={model} t={t} />
+                        <SelectItem key={model} value={model} textValue={displayLabel(model)}>
+                            <ModelLabel config={config} model={model} t={t} showChannel={showChannel} />
                         </SelectItem>
                     ))
                 ) : (
@@ -91,11 +93,11 @@ function emptyModelLabel(config: AiConfig, capability: ModelCapability | undefin
     return config.models.length ? t("modelPicker.noMatching", { label }) : t("modelPicker.addChannels");
 }
 
-function ModelLabel({ config, model, t }: { config: AiConfig; model: string; t: ReturnType<typeof useI18n>["t"] }) {
+function ModelLabel({ config, model, t, showChannel }: { config: AiConfig; model: string; t: ReturnType<typeof useI18n>["t"]; showChannel: boolean }) {
     return (
         <span className="flex min-w-0 items-center gap-2">
             <ModelIcon model={model} />
-            <span className="truncate">{modelOptionLabel(config, model, t)}</span>
+            <span className="truncate">{showChannel ? modelOptionLabel(config, model, t) : modelOptionDisplayName(model)}</span>
         </span>
     );
 }

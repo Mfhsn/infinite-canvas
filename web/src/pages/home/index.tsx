@@ -35,6 +35,7 @@ export default function IndexPage() {
     const recentAssets = useMemo(() => sortRecent(assets.filter(isVisualAsset)).slice(0, 4), [assets]);
     const latestProject = recentProjects[0];
     const latestAsset = recentAssets[0];
+    const secondaryAction = resolveHomeSecondaryAction(latestProject?.id);
 
     return (
         <main className="h-full overflow-y-auto bg-background text-foreground">
@@ -66,9 +67,11 @@ export default function IndexPage() {
                             >
                                 {t("home.newCanvas")}
                             </Button>
-                            <Button size="large" className="!h-11 !px-5" icon={latestProject ? <Play className="size-4" /> : <ImagePlus className="size-4" />} onClick={() => navigate(latestProject ? `/canvas/${latestProject.id}` : "/image")}>
-                                {latestProject ? t("home.continueCreating") : t("home.quickImage")}
-                            </Button>
+                            {secondaryAction ? (
+                                <Button size="large" className="!h-11 !px-5" icon={secondaryAction.kind === "canvas" ? <Play className="size-4" /> : <ImagePlus className="size-4" />} onClick={() => navigate(secondaryAction.path)}>
+                                    {t(secondaryAction.labelKey)}
+                                </Button>
+                            ) : null}
                         </div>
 
                         <div className="mt-8 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
@@ -322,6 +325,12 @@ function StarterPath({ t }: { t: ReturnType<typeof useI18n>["t"] }) {
 
 function sortRecent<T extends { updatedAt: string }>(items: T[]) {
     return [...items].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+}
+
+export function resolveHomeSecondaryAction(latestProjectId?: string, showImageWorkbench = ENV_SHOW_IMAGE_WORKBENCH) {
+    if (latestProjectId) return { kind: "canvas", path: `/canvas/${latestProjectId}`, labelKey: "home.continueCreating" } as const;
+    if (showImageWorkbench) return { kind: "image", path: "/image", labelKey: "home.quickImage" } as const;
+    return null;
 }
 
 function isVisualAsset(asset: Asset): asset is VisualAsset {

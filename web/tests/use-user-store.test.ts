@@ -47,13 +47,48 @@ describe("user store", () => {
         expect(useUserStore.getState()).toMatchObject({ status: "disabled", profile: null, permissionIds: [], currentPoints: null, projectContext: null, error: null });
     });
 
-    test("treats a missing host-platform login session as anonymous", async () => {
-        installBrowserStorage({});
+    test("clears the canvas session and redirects when host-platform localStorage is missing", async () => {
+        const redirects: string[] = [];
+        installBrowserStorage({}, { location: { assign: (url: string) => redirects.push(url) } } as unknown as Window & typeof globalThis);
+        const calls: Array<{ input: string; init?: RequestInit }> = [];
         const responses = [Response.json({ enabled: true }), Response.json({ ok: true })];
-        globalThis.fetch = (async () => responses.shift()!) as typeof fetch;
+        globalThis.fetch = (async (input, init) => {
+            calls.push({ input: String(input), init });
+            return responses.shift()!;
+        }) as typeof fetch;
+        await useUserStore.getState().initialize();
+
+        expect(useUserStore.getState()).toMatchObject({ status: "anonymous", profile: null, currentPoints: null });
+        expect(calls.map((call) => call.input)).toEqual(["/api/platform/config", "/api/platform/session/clear"]);
+        expect(calls[1]?.init?.method).toBe("POST");
+        expect(redirects).toEqual(["/?login=true"]);
+    });
+
+    test("still redirects when stale canvas session cleanup fails", async () => {
+        const redirects: string[] = [];
+        installBrowserStorage({}, { location: { assign: (url: string) => redirects.push(url) } } as unknown as Window & typeof globalThis);
+        const calls: string[] = [];
+        const responses = [Response.json({ enabled: true }), Response.json({ error: { message: "Cleanup unavailable" } }, { status: 503 })];
+        globalThis.fetch = (async (input) => {
+            calls.push(String(input));
+            return responses.shift()!;
+        }) as typeof fetch;
         await useUserStore.getState().initialize();
 
         expect(useUserStore.getState()).toMatchObject({ status: "anonymous", profile: null, error: null });
+        expect(calls).toEqual(["/api/platform/config", "/api/platform/session/clear"]);
+        expect(redirects).toEqual(["/?login=true"]);
+    });
+
+    test("redirects to the platform login page when an authenticated session expires", () => {
+        const redirects: string[] = [];
+        installBrowserStorage({}, { location: { assign: (url: string) => redirects.push(url) } } as unknown as Window & typeof globalThis);
+        useUserStore.setState(authenticatedUserState(platformContext()));
+
+        useUserStore.getState().handleUnauthorized();
+
+        expect(useUserStore.getState()).toMatchObject({ status: "anonymous", profile: null, error: null });
+        expect(redirects).toEqual(["/?login=true"]);
     });
 
     test("bootstraps an authenticated canvas session from the host platform localStorage session", async () => {
@@ -80,6 +115,100 @@ describe("user store", () => {
         expect(calls.map((call) => call.input)).toEqual(["/api/platform/config", "/api/platform/session/bootstrap"]);
         expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ externalToken: "host-token", refreshToken: "host-refresh", externalProjectId: "stale-project" });
         expect(storage.get("ai-comic-current-project-id")).toBe("external-9");
+    });
+
+    test("keeps canvas data unhydrated and requests a project when the host session has no project id", async () => {
+        const storage = installBrowserStorage({
+            "ai-comic-external-auth-session": JSON.stringify({ external_token: "host-token" }),
+        });
+        const calls: Array<{ input: string; init?: RequestInit }> = [];
+        const responses = [Response.json({ enabled: true }), Response.json({ projects: [{ project_id: "project-one", name: "Project One", points: 12, permission_ids: [3] }] })];
+        globalThis.fetch = (async (input, init) => {
+            calls.push({ input: String(input), init });
+            return responses.shift()!;
+        }) as typeof fetch;
+
+        await useUserStore.getState().initialize();
+
+        expect(useUserStore.getState()).toMatchObject({
+            status: "project_required",
+            profile: null,
+            projectContext: null,
+            onboardingLoadStatus: "success",
+            onboardingProjects: [{ projectId: "project-one", name: "Project One", points: 12, permissionIds: [3] }],
+        });
+        expect(storage.has("ai-comic-current-project-id")).toBe(false);
+        expect(calls.map((call) => call.input)).toEqual(["/api/platform/config", "/api/platform/onboarding/projects/list"]);
+        expect(JSON.parse(String(calls[1]?.init?.body))).toEqual({ externalToken: "host-token" });
+    });
+
+    test("falls back to the project picker when a persisted host project is no longer available", async () => {
+        const storage = installBrowserStorage({
+            "ai-comic-external-auth-session": JSON.stringify({ external_token: "host-token" }),
+            "ai-comic-current-project-id": "removed-project",
+        });
+        const calls: string[] = [];
+        const responses = [Response.json({ enabled: true }), Response.json({ error: { code: "platform_project_unavailable", message: "No accessible platform project is available" } }, { status: 403 }), Response.json({ projects: [] })];
+        globalThis.fetch = (async (input) => {
+            calls.push(String(input));
+            return responses.shift()!;
+        }) as typeof fetch;
+
+        await useUserStore.getState().initialize();
+
+        expect(calls).toEqual(["/api/platform/config", "/api/platform/session/bootstrap", "/api/platform/onboarding/projects/list"]);
+        expect(storage.has("ai-comic-current-project-id")).toBe(false);
+        expect(useUserStore.getState()).toMatchObject({
+            status: "project_required",
+            onboardingLoadStatus: "success",
+            onboardingProjects: [],
+        });
+    });
+
+    test("selects an onboarding project, persists it for the host platform, and then authenticates", async () => {
+        const context = platformContext();
+        const storage = installBrowserStorage({
+            "ai-comic-external-auth-session": JSON.stringify({ external_token: "host-token", refresh_token: "host-refresh" }),
+        });
+        useUserStore.setState({
+            status: "project_required",
+            onboardingProjects: [{ projectId: "external-9", name: "Nine", points: 42, permissionIds: [1, 7] }],
+            onboardingLoadStatus: "success",
+            onboardingError: null,
+        });
+        let request: { input: string; init?: RequestInit } | undefined;
+        globalThis.fetch = (async (input, init) => {
+            request = { input: String(input), init };
+            return Response.json(context, { headers: { "X-Canvas-Session-Binding": "binding-9" } });
+        }) as typeof fetch;
+
+        await useUserStore.getState().selectOnboardingProject("external-9");
+
+        expect(request?.input).toBe("/api/platform/session/bootstrap");
+        expect(JSON.parse(String(request?.init?.body))).toEqual({ externalToken: "host-token", refreshToken: "host-refresh", externalProjectId: "external-9" });
+        expect(storage.get("ai-comic-current-project-id")).toBe("external-9");
+        expect(useUserStore.getState()).toMatchObject({
+            status: "authenticated",
+            projectContext: { localProjectId: 9, externalProjectId: "external-9" },
+            onboardingProjects: [],
+            onboardingSelectingProjectId: null,
+        });
+    });
+
+    test("keeps the project picker available when onboarding project lookup fails", async () => {
+        installBrowserStorage({
+            "ai-comic-external-auth-session": JSON.stringify({ external_token: "host-token" }),
+        });
+        const responses = [Response.json({ enabled: true }), Response.json({ error: { code: "integration_error", message: "Project service unavailable" } }, { status: 502 })];
+        globalThis.fetch = (async () => responses.shift()!) as typeof fetch;
+
+        await useUserStore.getState().initialize();
+
+        expect(useUserStore.getState()).toMatchObject({
+            status: "project_required",
+            onboardingLoadStatus: "error",
+            onboardingError: "Project service unavailable",
+        });
     });
 
     test("refreshes user points from the current platform context and coalesces concurrent generation completions", async () => {
@@ -119,7 +248,7 @@ describe("user store", () => {
     });
 });
 
-function installBrowserStorage(entries: Record<string, string>) {
+function installBrowserStorage(entries: Record<string, string>, nextWindow: typeof globalThis.window = undefined as unknown as Window & typeof globalThis) {
     const values = new Map(Object.entries(entries));
     const storage = {
         get length() {
@@ -131,7 +260,7 @@ function installBrowserStorage(entries: Record<string, string>) {
         removeItem: (key: string) => void values.delete(key),
         setItem: (key: string, value: string) => void values.set(key, String(value)),
     } satisfies Storage;
-    setBrowserGlobals(undefined as unknown as Window & typeof globalThis, storage);
+    setBrowserGlobals(nextWindow, storage);
     return values;
 }
 

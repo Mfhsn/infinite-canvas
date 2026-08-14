@@ -1,12 +1,22 @@
 import axios from "axios";
 import { nanoid } from "nanoid";
 
-import { ENV_AI_TASK_TIMEOUT_MS, ENV_DREAM_INCLUDE_PROJECT_ID } from "@/constant/env";
+import { dreamImagePlatformId, dreamVideoPlatformId, ENV_AI_TASK_TIMEOUT_MS, ENV_DREAM_INCLUDE_PROJECT_ID } from "@/constant/env";
 import { audioMimeType, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { AppError, requestError } from "@/lib/app-error";
-import { resolveDreamImageDimensions } from "@/lib/dream-image-size";
+import { isDreamGptImageModel, normalizeDreamImageQuality, resolveDreamImageDimensions } from "@/lib/dream-image-size";
 import { dataUrlToFile } from "@/lib/image-utils";
-import { dreamOmniReferenceIssue, ensureSeedanceReferenceMentions, isDreamSeedance15Model, isDreamSeedance20Model, normalizeDreamVideoDuration, normalizeDreamVideoMode, normalizeDreamVideoRatio, normalizeDreamVideoSeed } from "@/lib/seedance-video";
+import {
+    dreamOmniReferenceIssue,
+    ensureSeedanceReferenceMentions,
+    isDreamSeedance15Model,
+    isDreamSeedance20Model,
+    normalizeDreamVideoDuration,
+    normalizeDreamVideoMode,
+    normalizeDreamVideoRatio,
+    normalizeDreamVideoResolution,
+    normalizeDreamVideoSeed,
+} from "@/lib/seedance-video";
 import type { DreamPointsEstimateRequest } from "@/lib/dream-points";
 import type { I18nKey } from "@/i18n/messages";
 import { DREAM_API_PROXY_PATH, DREAM_MEDIA_PROXY_PATH, dreamApiProxyUrl, dreamMediaProxyUrl } from "@/services/api/dream-media";
@@ -46,17 +56,19 @@ export async function requestDreamPointsEstimate(config: AiConfig, request: Drea
 }
 
 export async function requestDreamImageGeneration(config: AiConfig, prompt: string, count: number, options?: RequestOptions) {
-    const { width, height } = resolveDreamImageDimensions(config.size, config.quality);
+    const model = modelOptionName(config.model);
+    const { width, height } = resolveDreamImageDimensions(config.size, config.quality, model);
     const response = await axios.post<DreamApiEnvelope>(
         dreamApiUrl(config, "/api/v1/dream/dream_image"),
         {
             ...dreamProjectRequestFields(),
-            dream_image_req_key: modelOptionName(config.model),
+            dream_image_req_key: model,
             script_text: prompt,
             width,
             height,
             num_images: count,
-            platform_id: config.platformId,
+            ...(isDreamGptImageModel(model) ? { image_quality: normalizeDreamImageQuality(config.imageQuality) } : {}),
+            platform_id: dreamImagePlatformId(),
         },
         { headers: dreamHeaders(config), signal: options?.signal },
     );
@@ -67,18 +79,20 @@ export async function requestDreamImageGeneration(config: AiConfig, prompt: stri
 export async function requestDreamImageEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, count = 1, options?: RequestOptions) {
     if (mask) return requestDreamInpainting(config, prompt, references, mask, options);
     if (modelOptionName(config.model).toLowerCase().includes("outpainting")) return requestDreamOutpainting(config, prompt, references, options);
-    const { width, height } = resolveDreamImageDimensions(config.size, config.quality);
+    const model = modelOptionName(config.model);
+    const { width, height } = resolveDreamImageDimensions(config.size, config.quality, model);
     const response = await axios.post<DreamApiEnvelope>(
         dreamApiUrl(config, "/api/v1/dream/dream_image"),
         {
             ...dreamProjectRequestFields(),
-            dream_image_req_key: modelOptionName(config.model),
+            dream_image_req_key: model,
             image_asset_ids: await dreamImageAssetIds(config, references, options),
             script_text: prompt,
             width,
             height,
             num_images: count,
-            platform_id: config.platformId,
+            ...(isDreamGptImageModel(model) ? { image_quality: normalizeDreamImageQuality(config.imageQuality) } : {}),
+            platform_id: dreamImagePlatformId(),
         },
         { headers: dreamHeaders(config), signal: options?.signal },
     );
@@ -159,6 +173,7 @@ async function requestDreamInpainting(config: AiConfig, prompt: string, referenc
         dreamApiUrl(config, "/api/v1/dream/inpainting_edit"),
         {
             ...dreamProjectRequestFields(),
+            platform_id: dreamImagePlatformId(),
             req_key: modelOptionName(config.model) || "i2i_inpainting_edit",
             task_type: "dream",
             image_asset_ids: await dreamImageAssetIds(config, [...references, mask], options),
@@ -175,6 +190,7 @@ async function requestDreamOutpainting(config: AiConfig, prompt: string, referen
         dreamApiUrl(config, "/api/v1/dream/outpainting"),
         {
             ...dreamProjectRequestFields(),
+            platform_id: dreamImagePlatformId(),
             req_key: modelOptionName(config.model) || "i2i_outpainting",
             task_type: "dream",
             image_asset_ids: await dreamImageAssetIds(config, references, options),
@@ -400,7 +416,7 @@ async function dreamVideoRequestBody(config: AiConfig, model: string, prompt: st
     const mode = normalizeDreamVideoMode(config.videoMode, model);
     const scriptText = mode === "subject" ? ensureSeedanceReferenceMentions(promptText, references, videoReferences, audioReferences) : promptText;
     const body: Record<string, unknown> = {
-        platform_id: config.platformId,
+        platform_id: dreamVideoPlatformId(),
         ...dreamProjectRequestFields(),
         // Seedance 2.0's omni-reference mode uses reference2video while its
         // uploaded image, video, and audio assets remain flat ID lists.
@@ -411,6 +427,9 @@ async function dreamVideoRequestBody(config: AiConfig, model: string, prompt: st
         duration: normalizeDreamVideoDuration(config.videoSeconds, model),
         audio: boolConfig(config.videoGenerateAudio, false),
     };
+    if (isDreamSeedance20Model(model)) {
+        body.resolution = normalizeDreamVideoResolution(config.vquality, model);
+    }
     if (isDreamSeedance15Model(model)) {
         body.seed = normalizeDreamVideoSeed(config.videoSeed);
     }
@@ -434,11 +453,13 @@ async function dreamVideoRequestBody(config: AiConfig, model: string, prompt: st
 
 function dreamProjectId() {
     const projectId = useUserStore.getState().projectContext?.localProjectId;
-    return typeof projectId === "number" && Number.isSafeInteger(projectId) && projectId >= 0 ? projectId : 0;
+    return typeof projectId === "number" && Number.isSafeInteger(projectId) && projectId >= 0 ? projectId : null;
 }
 
 export function dreamProjectRequestFields(includeProjectId = ENV_DREAM_INCLUDE_PROJECT_ID): { project_id?: number } {
-    return includeProjectId ? { project_id: dreamProjectId() } : {};
+    if (!includeProjectId) return {};
+    const projectId = dreamProjectId();
+    return projectId === null ? {} : { project_id: projectId };
 }
 
 function dreamStartEndReferences(references: ReferenceImage[]) {

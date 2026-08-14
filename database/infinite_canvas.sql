@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS integration_sessions (
   nickname VARCHAR(255) NOT NULL,
   permission_ids JSON NOT NULL,
   current_points DECIMAL(20, 4) NULL,
-  local_project_id BIGINT NOT NULL,
+  local_project_id BIGINT NULL,
   external_project_id VARCHAR(255) NULL,
   source_system VARCHAR(255) NOT NULL,
   external_token_ciphertext TEXT NULL,

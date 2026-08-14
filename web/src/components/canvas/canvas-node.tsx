@@ -10,6 +10,7 @@ import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textare
 import { CanvasNodeType, type CanvasNodeData, type Position } from "@/types/canvas";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { useI18n } from "@/i18n/use-i18n";
+import { appendPlatformSessionBinding } from "@/services/platform-session";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 const selectionBlue = "#2f80ff";
@@ -24,7 +25,6 @@ type CanvasNodeProps = {
     isConnecting: boolean;
     editRequestNonce?: number;
     showPanel: boolean;
-    panelPlacement?: "top" | "bottom";
     showImageInfo: boolean;
     resourceLabel?: CanvasResourceReference;
     mentionReferences?: CanvasResourceReference[];
@@ -80,7 +80,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     isConnecting,
     editRequestNonce = 0,
     showPanel,
-    panelPlacement = "bottom",
     showImageInfo,
     resourceLabel,
     mentionReferences = [],
@@ -332,7 +331,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} />
 
             {showPanel && renderPanel ? (
-                <div className={`absolute left-1/2 z-[70] max-w-[calc(100vw-32px)] -translate-x-1/2 ${panelPlacement === "top" ? "bottom-full pb-4" : "top-full pt-4"} ${data.type === CanvasNodeType.Config ? "w-[500px]" : "w-[680px]"}`}>
+                <div data-node-editor-panel={data.id} className={`absolute left-1/2 top-full z-[70] max-w-[calc(100vw-32px)] -translate-x-1/2 pt-4 ${data.type === CanvasNodeType.Config ? "w-[500px]" : "w-[680px]"}`}>
                     {renderPanel(data)}
                 </div>
             ) : null}
@@ -512,7 +511,7 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-sm">{t("canvas.node.emptyVideo")}</span>
             </div>
         );
-    return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
+    return <video src={canvasMediaUrl(node)} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
@@ -530,7 +529,7 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
                 <Music2 className="size-4 shrink-0" />
                 <span className="truncate">{node.title || t("common.audio")}</span>
             </div>
-            <audio src={node.metadata.content} controls className="w-full" data-canvas-no-zoom />
+            <audio src={canvasMediaUrl(node)} controls className="w-full" data-canvas-no-zoom />
         </div>
     );
 }
@@ -562,7 +561,7 @@ function ImageContent({
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
             <div className="h-full w-full overflow-hidden rounded-3xl">
                 <img
-                    src={node.metadata!.content!}
+                    src={canvasMediaUrl(node)}
                     alt={node.title}
                     draggable={false}
                     onDragStart={(event) => event.preventDefault()}
@@ -604,6 +603,11 @@ function ImageContent({
             ) : null}
         </BatchFrame>
     );
+}
+
+function canvasMediaUrl(node: CanvasNodeData) {
+    const content = node.metadata?.content || "";
+    return node.metadata?.storageKey ? appendPlatformSessionBinding(content) : content;
 }
 
 function ImageInfoBar({ node }: { node: CanvasNodeData }) {

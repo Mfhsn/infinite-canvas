@@ -25,9 +25,11 @@ const buildEnv: RuntimeEnv = {
     VITE_AI_API_FORMAT: import.meta.env.VITE_AI_API_FORMAT,
     VITE_AI_BASE_URL: import.meta.env.VITE_AI_BASE_URL,
     VITE_AI_LLM_URL: import.meta.env.VITE_AI_LLM_URL,
-    VITE_AI_LLM_PLATFORM_CODE: import.meta.env.VITE_AI_LLM_PLATFORM_CODE,
+    VITE_AI_LLM_MAX_COMPLETION_TOKENS: import.meta.env.VITE_AI_LLM_MAX_COMPLETION_TOKENS,
     VITE_AI_API_KEY: import.meta.env.VITE_AI_API_KEY,
     VITE_AI_PLATFORM_ID: import.meta.env.VITE_AI_PLATFORM_ID,
+    VITE_DREAM_IMAGE_PLATFORM_ID: import.meta.env.VITE_DREAM_IMAGE_PLATFORM_ID,
+    VITE_DREAM_VIDEO_PLATFORM_ID: import.meta.env.VITE_DREAM_VIDEO_PLATFORM_ID,
     VITE_DREAM_INCLUDE_PROJECT_ID: import.meta.env.VITE_DREAM_INCLUDE_PROJECT_ID,
     VITE_AI_MODELS: import.meta.env.VITE_AI_MODELS,
     VITE_SHOW_IMAGE_WORKBENCH: import.meta.env.VITE_SHOW_IMAGE_WORKBENCH,
@@ -58,7 +60,7 @@ export const DOCS_URL = envString("VITE_DOC_URL") || "https://docs.canvas.best";
 export const ENV_AI_PLATFORM_ID = envInteger("VITE_AI_PLATFORM_ID", 6);
 export const ENV_DREAM_INCLUDE_PROJECT_ID = envBooleanDefault("VITE_DREAM_INCLUDE_PROJECT_ID", true);
 export const ENV_AI_LLM_URL = envString("VITE_AI_LLM_URL") || "https://106.75.147.147/api/v1/ai-service/llm/chat";
-export const ENV_AI_LLM_PLATFORM_CODE = envString("VITE_AI_LLM_PLATFORM_CODE") || "ucloud";
+export const ENV_AI_LLM_MAX_COMPLETION_TOKENS = envPositiveInteger("VITE_AI_LLM_MAX_COMPLETION_TOKENS", 4096);
 export const ENV_AI_CHANNELS = envAiChannels();
 export const ENV_AI_CONFIG_OVERRIDE = envBoolean("VITE_AI_CONFIG_OVERRIDE");
 export const ENV_SHOW_IMAGE_WORKBENCH = envBooleanDefault("VITE_SHOW_IMAGE_WORKBENCH", true);
@@ -84,9 +86,19 @@ export const ENV_DEFAULT_AUDIO_VOICE = envString("VITE_DEFAULT_AUDIO_VOICE");
 export const ENV_DEFAULT_AUDIO_FORMAT = envString("VITE_DEFAULT_AUDIO_FORMAT");
 export const ENV_DEFAULT_AUDIO_SPEED = envString("VITE_DEFAULT_AUDIO_SPEED");
 
+export function dreamImagePlatformId() {
+    return requiredEnvInteger("VITE_DREAM_IMAGE_PLATFORM_ID");
+}
+
+export function dreamVideoPlatformId() {
+    return requiredEnvInteger("VITE_DREAM_VIDEO_PLATFORM_ID");
+}
+
 function envString(key: string) {
     const runtimeValue = runtimeEnv?.[key];
     if (runtimeValue !== undefined) return String(runtimeValue);
+    const processValue = typeof process === "undefined" ? undefined : process.env[key];
+    if (processValue !== undefined) return String(processValue);
     const buildValue = buildEnv[key];
     return typeof buildValue === "string" ? buildValue : "";
 }
@@ -144,6 +156,12 @@ function normalizeEnvChannel(value: unknown): EnvAiChannel | null {
 
 function envInteger(key: string, fallback: number) {
     return integerValue(envString(key)) ?? fallback;
+}
+
+function requiredEnvInteger(key: string) {
+    const value = integerValue(envString(key));
+    if (value === undefined) throw new Error(`${key} must be configured as a non-negative integer`);
+    return value;
 }
 
 function envPositiveInteger(key: string, fallback: number) {

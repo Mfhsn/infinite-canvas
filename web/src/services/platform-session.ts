@@ -37,12 +37,24 @@ export function withPlatformSessionBinding(headers?: HeadersInit) {
 }
 
 export function appendPlatformSessionBinding(value: string) {
-    if (!sessionBinding) return value;
+    return updatePlatformSessionBinding(value, sessionBinding || undefined);
+}
+
+export function stripPlatformSessionBinding(value: string) {
+    return updatePlatformSessionBinding(value);
+}
+
+function updatePlatformSessionBinding(value: string, binding?: string) {
     const hashIndex = value.indexOf("#");
     const hash = hashIndex >= 0 ? value.slice(hashIndex) : "";
     const base = hashIndex >= 0 ? value.slice(0, hashIndex) : value;
-    const separator = base.includes("?") ? "&" : "?";
-    return `${base}${separator}${SESSION_BINDING_QUERY}=${encodeURIComponent(sessionBinding)}${hash}`;
+    const queryIndex = base.indexOf("?");
+    const path = queryIndex >= 0 ? base.slice(0, queryIndex) : base;
+    const params = new URLSearchParams(queryIndex >= 0 ? base.slice(queryIndex + 1) : "");
+    if (binding) params.set(SESSION_BINDING_QUERY, binding);
+    else params.delete(SESSION_BINDING_QUERY);
+    const query = params.toString();
+    return `${path}${query ? `?${query}` : ""}${hash}`;
 }
 
 export function notifyPlatformSessionChange(change: PlatformSessionChange) {

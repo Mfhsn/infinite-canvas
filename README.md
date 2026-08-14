@@ -127,12 +127,12 @@ bun run dev
 
 项目默认只内置“API接口示例”渠道，并严格提供以下模型：
 
-- 图片：`doubao-seedream-4.5`（默认）、`doubao-seedream-5-0-260128`
-- 视频：`doubao-seedance-1-5-pro-251215`（默认）、`doubao-seedance-2-0-260128`
-- 文本：`doubao-1.5-pro`（默认），调用独立 HTTPS 端点 `/api/v1/ai-service/llm/chat`
+- 图片：`doubao-seedream-4.5`（默认）、`doubao-seedream-5-0-260128`、`gemini-3.1-flash-image`、`gpt-image-2`
+- 视频：`doubao-seedance-2-0-260128`（默认）、`doubao-seedance-2-0-fast-260128`、`doubao-seedance-2-0-mini-260615`、`doubao-seedance-2-5-260628`
+- 文本：`doubao-1.5-pro`（默认）、`doubao-seed-2-1-pro-260628`、`glm-5.2`、`gemini-2.5-pro`，调用独立 HTTPS 端点 `/api/v1/ai-service/llm/chat`
 - 音频：`tts-synthesize`（TTS 端点标识）
 
-复制根目录 `.env.example` 为 `.env` 后即可同时供 Docker Compose 和本地 Vite 开发读取；`VITE_AI_BASE_URL` 配置图片、视频和 TTS 接口前缀，`VITE_AI_LLM_URL` 单独配置文本模型的完整 HTTPS 地址，`VITE_AI_LLM_PLATFORM_CODE` 默认为 `ucloud`，`VITE_AI_API_KEY` 配置固定 Bearer Token，`VITE_AI_PLATFORM_ID` 配置 Dream 请求中的 `platform_id`（当前文档要求使用 `6`）。`VITE_AI_MODELS` 留空时使用上述内置模型；如需接入其他模型，可通过环境变量定义自有渠道及其模型列表，不会扩充内置渠道。
+复制根目录 `.env.example` 为 `.env` 后即可同时供 Docker Compose 和本地 Vite 开发读取；`VITE_AI_BASE_URL` 配置图片、视频和 TTS 接口前缀，`VITE_AI_LLM_URL` 单独配置文本模型的完整 HTTPS 地址，`VITE_AI_LLM_MAX_COMPLETION_TOKENS` 同时控制 LLM 最大输出 token 数和积分预估中的 `completion_tokens`（默认 `4096`），`VITE_AI_API_KEY` 配置固定 Bearer Token，`VITE_AI_PLATFORM_ID` 配置 Dream 请求中的 `platform_id`（当前文档要求使用 `6`）。LLM 请求的 `platform_code` 固定为 `ucloud`，`model_code` 使用所选模型的实际 ID。`VITE_AI_MODELS` 留空时使用上述内置模型；如需接入其他模型，可通过环境变量定义自有渠道及其模型列表，不会扩充内置渠道。
 
 图片请求支持提示词、参考图、宽高、生成数量和 `platform_id`。选择分辨率和比例后，前端会将配置转换为明确的 `width`、`height` 数字；4K 的宽高分别为对应 2K 尺寸的 2 倍：
 

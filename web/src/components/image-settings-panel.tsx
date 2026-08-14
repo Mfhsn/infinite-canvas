@@ -1,10 +1,10 @@
-import { type ReactNode, useState } from "react";
+import { type MouseEvent, type PointerEvent, type ReactNode, useRef, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { DREAM_IMAGE_MODELS, modelOptionName, resolveModelChannel, type AiConfig } from "@/stores/use-config-store";
 import { useI18n } from "@/i18n/use-i18n";
-import { DREAM_IMAGE_RATIOS, DREAM_IMAGE_RESOLUTIONS, dreamImagePreset, dreamImageSelection, type DreamImageRatio, type DreamImageResolution } from "@/lib/dream-image-size";
+import { dreamImagePreset, dreamImageRatiosForModel, dreamImageResolutionsForModel, dreamImageSelection, isDreamGptImageModel, normalizeDreamImageQuality, type DreamImageRatio, type DreamImageResolution } from "@/lib/dream-image-size";
 
 const qualityOptions = [
     { value: "auto", labelKey: "settings.image.quality.auto" },
@@ -30,17 +30,12 @@ const aspectOptions = [
     { value: "auto", label: "auto", width: 0, height: 0, icon: "auto" },
 ];
 
-const dreamAspectOptions = DREAM_IMAGE_RATIOS.map((value) => {
-    const { width, height } = dreamImagePreset("2k", value);
-    return { value, label: value, width, height, icon: width === height ? "square" : width > height ? "landscape" : "portrait" };
-});
-
 export const imageQualityOptions = qualityOptions;
 export const imageAspectOptions = aspectOptions;
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "count", value: string) => void;
+    onConfigChange: (key: "quality" | "imageQuality" | "size" | "count", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -52,18 +47,27 @@ type ImageSettingsPanelProps = {
 export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10, model }: ImageSettingsPanelProps) {
     const { t } = useI18n();
     const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
-    const dreamMode = isDreamImageSettings(config, model);
+    const selectedModel = model || config.model || config.imageModel;
+    const dreamMode = isDreamImageSettings(config, selectedModel);
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
-    const dreamSelection = dreamImageSelection(config.quality, activeSize);
+    const dreamResolutions = dreamImageResolutionsForModel(selectedModel);
+    const dreamSelection = dreamImageSelection(config.quality, activeSize, selectedModel);
+    const dreamRatios = dreamImageRatiosForModel(selectedModel, dreamSelection.resolution);
+    const dreamAspectOptions = dreamRatios.map((value) => {
+        const { width, height } = dreamImagePreset("2k", value);
+        return { value, label: value, width, height, icon: width === height ? "square" : width > height ? "landscape" : "portrait" };
+    });
+    const showDreamImageQuality = dreamMode && isDreamGptImageModel(selectedModel);
+    const dreamImageQuality = normalizeDreamImageQuality(config.imageQuality || "medium");
     const quality = dreamMode ? dreamSelection.resolution : config.quality || "auto";
     const activeAspectOptions = dreamMode ? dreamAspectOptions : aspectOptions;
     const selectedAspect = dreamMode ? dreamAspectOptions.find((item) => item.value === dreamSelection.ratio) : aspectOptions.find((item) => (item.size || item.value) === activeSize || item.value === activeSize);
     const dimensions = dreamMode ? dreamSelection : readSizeDimensions(activeSize, selectedAspect || aspectOptions[0]);
     const selectResolution = (resolution: DreamImageResolution) => {
-        const preset = dreamImagePreset(resolution, dreamSelection.ratio);
+        const nextSelection = dreamImageSelection(resolution, activeSize, selectedModel);
         onConfigChange("quality", resolution);
-        onConfigChange("size", preset.size);
+        onConfigChange("size", nextSelection.size);
     };
     const selectAspect = (value: string) => {
         if (dreamMode) {
@@ -95,8 +99,8 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t(dreamMode ? "settings.image.resolution" : "settings.image.quality")}</SettingTitle>
                     {dreamMode ? (
-                        <div className="grid grid-cols-2 gap-2.5">
-                            {DREAM_IMAGE_RESOLUTIONS.map((resolution) => (
+                        <div className={`grid gap-2.5 ${dreamResolutions.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+                            {dreamResolutions.map((resolution) => (
                                 <OptionPill key={resolution} selected={quality === resolution} theme={theme} onClick={() => selectResolution(resolution)}>
                                     {resolution.toUpperCase()}
                                 </OptionPill>
@@ -112,6 +116,18 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         </div>
                     )}
                 </div>
+                {showDreamImageQuality ? (
+                    <div className="space-y-2.5">
+                        <SettingTitle color={theme.node.muted}>{t("settings.image.quality")}</SettingTitle>
+                        <div className="grid grid-cols-3 gap-2.5">
+                            {["low", "medium", "high"].map((value) => (
+                                <OptionPill key={value} selected={dreamImageQuality === value} theme={theme} onClick={() => onConfigChange("imageQuality", value)}>
+                                    {imageQualityLabel(value, t)}
+                                </OptionPill>
+                            ))}
+                        </div>
+                    </div>
+                ) : null}
                 <div className="space-y-2.5">
                     <div className="flex items-center justify-between gap-3">
                         <SettingTitle color={theme.node.muted}>{t("settings.image.size")}</SettingTitle>
@@ -134,7 +150,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </div>
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>{t("settings.image.aspectRatio")}</SettingTitle>
-                    <div className={`grid gap-2.5 ${dreamMode ? "grid-cols-5" : "grid-cols-4"}`}>
+                    <div className={`grid gap-2.5 ${dreamMode ? (dreamAspectOptions.length > 6 ? "grid-cols-5" : "grid-cols-3") : "grid-cols-4"}`}>
                         {activeAspectOptions.map((item) => (
                             <button
                                 key={item.value}
@@ -180,7 +196,7 @@ export function ImageSettingsTheme({ theme, children }: { theme: CanvasTheme; ch
 }
 
 export function imageQualityLabel(value: string, t?: ReturnType<typeof useI18n>["t"]) {
-    if (value === "2k" || value === "4k") return value.toUpperCase();
+    if (value === "1k" || value === "2k" || value === "4k") return value.toUpperCase();
     const keys = { auto: "settings.image.quality.auto", high: "settings.image.quality.high", medium: "settings.image.quality.medium", low: "settings.image.quality.low" } as const;
     const key = keys[value as keyof typeof keys];
     if (key && t) return t(key);
@@ -198,13 +214,36 @@ export function imageSizeLabel(size: string, t?: ReturnType<typeof useI18n>["t"]
 }
 
 function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
+    const pointerActivatedRef = useRef(false);
+    const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+        if (event.button !== 0) return;
+        // Commit the action on pointerdown so a surrounding canvas/popup
+        // handler cannot cancel the later click after the panel rerenders.
+        event.preventDefault();
+        event.stopPropagation();
+        pointerActivatedRef.current = true;
+        onClick();
+    };
+    const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
+        event.stopPropagation();
+        // Mouse activation already ran from pointerdown. Keep click for
+        // keyboard activation and browsers that do not emit pointer events.
+        if (event.detail > 0 && pointerActivatedRef.current) {
+            pointerActivatedRef.current = false;
+            return;
+        }
+        pointerActivatedRef.current = false;
+        onClick();
+    };
+
     return (
         <button
             type="button"
             className="h-9 cursor-pointer rounded-full border px-2 text-sm transition hover:opacity-80"
             style={{ background: "transparent", borderColor: selected ? theme.node.text : theme.node.stroke, color: theme.node.text }}
+            onPointerDown={handlePointerDown}
             onMouseDown={(event) => event.stopPropagation()}
-            onClick={onClick}
+            onClick={handleClick}
         >
             {children}
         </button>

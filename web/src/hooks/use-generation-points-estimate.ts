@@ -1,7 +1,7 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 import { buildNodeGenerationContextFromInputs, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
-import { buildDreamImagePointsSpec, buildDreamVideoPointsSpec, type DreamPointsEstimateSpec } from "@/lib/dream-points";
+import { buildDreamImagePointsSpec, buildDreamTextPointsSpec, buildDreamVideoPointsSpec, type DreamPointsEstimateSpec } from "@/lib/dream-points";
 import { isBuiltInDreamVideoConfig, normalizeDreamVideoMode } from "@/lib/seedance-video";
 import { requestDreamPointsEstimate } from "@/services/api/dream";
 import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
@@ -35,8 +35,10 @@ export function useCanvasGenerationPointsEstimate(options: { config: AiConfig; m
     const spec =
         options.mode === "image"
             ? buildDreamImagePointsSpec(options.config, options.config.count, context.referenceImages.length + sourceImageCount)
-            : options.mode === "video"
-              ? buildDreamVideoPointsSpec(options.config, { imageCount: context.referenceImages.length, videoCount: context.referenceVideos.length })
-              : null;
+            : options.mode === "text"
+              ? buildDreamTextPointsSpec(options.config, options.node.type === CanvasNodeType.Config ? options.config.count : 1)
+              : options.mode === "video"
+                ? buildDreamVideoPointsSpec(options.config, { imageCount: context.referenceImages.length, videoCount: context.referenceVideos.length })
+                : null;
     return { spec, query: useGenerationPointsEstimate(spec) };
 }

@@ -57,6 +57,15 @@ export function writeHostCurrentProjectId(projectId: string, storage: StorageAcc
     }
 }
 
+export function clearHostCurrentProjectId(storage: StorageAccess | null = browserStorage()) {
+    if (!storage) return;
+    try {
+        storage.removeItem(HOST_CURRENT_PROJECT_ID_KEY);
+    } catch {
+        // The server session remains authoritative when browser storage is restricted.
+    }
+}
+
 export function clearHostPlatformSession(storage: StorageAccess | null = browserStorage()) {
     if (!storage) return;
     for (const key of [HOST_EXTERNAL_AUTH_SESSION_KEY, HOST_INTEGRATION_SESSION_KEY, HOST_CURRENT_PROJECT_ID_KEY, HOST_CURRENT_USER_ID_KEY]) {

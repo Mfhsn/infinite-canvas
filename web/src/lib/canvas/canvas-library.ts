@@ -1,4 +1,5 @@
 import type { CanvasFolder, CanvasProject } from "@/types/canvas-library";
+import { stripPlatformSessionBinding } from "@/services/platform-session";
 
 export const MAX_FOLDER_TRAVERSAL = 1_000;
 const INITIAL_VIEWPORT = { x: 0, y: 0, k: 1 } as const;
@@ -23,6 +24,32 @@ function isCanvasCoverKey(value: unknown, projectId: string): value is string {
     return typeof value === "string" && value.startsWith(`canvas-cover:${projectId}:`) && value.length > `canvas-cover:${projectId}:`.length;
 }
 
+function stripNodeSessionBinding(node: CanvasProject["nodes"][number]) {
+    if (!node?.metadata?.storageKey || !node.metadata.content) return node;
+    const content = stripPlatformSessionBinding(node.metadata.content);
+    return content === node.metadata.content ? node : { ...node, metadata: { ...node.metadata, content } };
+}
+
+function stripChatSessionBindings(session: CanvasProject["chatSessions"][number]) {
+    if (!session?.messages) return session;
+    let changed = false;
+    const messages = session.messages.map((message) => {
+        if (!message?.references?.length) return message;
+        let referencesChanged = false;
+        const references = message.references.map((reference) => {
+            if (!reference?.storageKey || !reference.dataUrl) return reference;
+            const dataUrl = stripPlatformSessionBinding(reference.dataUrl);
+            if (dataUrl === reference.dataUrl) return reference;
+            referencesChanged = true;
+            return { ...reference, dataUrl };
+        });
+        if (!referencesChanged) return message;
+        changed = true;
+        return { ...message, references };
+    });
+    return changed ? { ...session, messages } : session;
+}
+
 export function normalizeCanvasProject(input: unknown): CanvasProject {
     const source = record(input);
     const id = stringValue(source.id);
@@ -34,9 +61,9 @@ export function normalizeCanvasProject(input: unknown): CanvasProject {
         title: stringValue(source.title),
         createdAt: stringValue(source.createdAt),
         updatedAt: stringValue(source.updatedAt),
-        nodes: stringArrayValue<CanvasProject["nodes"][number]>(source.nodes),
+        nodes: stringArrayValue<CanvasProject["nodes"][number]>(source.nodes).map(stripNodeSessionBinding),
         connections: stringArrayValue<CanvasProject["connections"][number]>(source.connections),
-        chatSessions: stringArrayValue<CanvasProject["chatSessions"][number]>(source.chatSessions),
+        chatSessions: stringArrayValue<CanvasProject["chatSessions"][number]>(source.chatSessions).map(stripChatSessionBindings),
         activeChatId: typeof source.activeChatId === "string" ? source.activeChatId : null,
         backgroundMode: source.backgroundMode === "dots" || source.backgroundMode === "lines" || source.backgroundMode === "blank" ? source.backgroundMode : "lines",
         showImageInfo: source.showImageInfo === true,

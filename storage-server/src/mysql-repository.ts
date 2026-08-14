@@ -35,7 +35,7 @@ interface IntegrationSessionRow extends RowDataPacket {
   nickname: string;
   permission_ids: string | number[];
   current_points: string | number | null;
-  local_project_id: string | number;
+  local_project_id: string | number | null;
   external_project_id: string | null;
   source_system: string | null;
   external_token_ciphertext: string | null;
@@ -149,8 +149,8 @@ export class MysqlIntegrationSessionRepository implements IntegrationSessionRepo
     );
     const row = rows[0];
     if (!row) return null;
-    const localProjectId = Number(row.local_project_id);
-    if (!Number.isSafeInteger(localProjectId) || !row.uid.trim() || !row.source_system?.trim()) {
+    const localProjectId = row.local_project_id === null ? null : Number(row.local_project_id);
+    if ((localProjectId !== null && !Number.isSafeInteger(localProjectId)) || !row.uid.trim() || !row.source_system?.trim()) {
       await this.delete(sessionIdHash);
       return null;
     }

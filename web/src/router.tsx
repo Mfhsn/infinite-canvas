@@ -1,5 +1,6 @@
 import { createBrowserRouter, Outlet } from "react-router-dom";
 
+import { ENV_SHOW_IMAGE_WORKBENCH, ENV_SHOW_VIDEO_WORKBENCH } from "@/constant/env";
 import { APP_ROUTER_BASENAME } from "@/lib/app-base-path";
 import UserLayout from "@/layouts/user-layout";
 import AssetsPage from "@/pages/assets";
@@ -21,8 +22,8 @@ export const router = createBrowserRouter(
             ),
             children: [
                 { path: "/", element: <HomePage /> },
-                { path: "/image", element: <ImagePage /> },
-                { path: "/video", element: <VideoPage /> },
+                ...(ENV_SHOW_IMAGE_WORKBENCH ? [{ path: "/image", element: <ImagePage /> }] : []),
+                ...(ENV_SHOW_VIDEO_WORKBENCH ? [{ path: "/video", element: <VideoPage /> }] : []),
                 { path: "/assets", element: <AssetsPage /> },
                 { path: "/prompts", element: <PromptsPage /> },
                 { path: "/canvas", element: <CanvasPage /> },

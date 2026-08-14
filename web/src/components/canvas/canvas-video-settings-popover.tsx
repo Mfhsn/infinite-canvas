@@ -5,8 +5,9 @@ import { Button } from "antd";
 
 import { VideoSettingsPanel, videoSettingsSummary } from "@/components/video-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { isBuiltInDreamVideoConfig, isDreamSeedance20Model, normalizeDreamVideoResolution } from "@/lib/seedance-video";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { AiConfig } from "@/stores/use-config-store";
+import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
 import { useI18n } from "@/i18n/use-i18n";
 
 type CanvasVideoSettingsPopoverProps = {
@@ -23,6 +24,13 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
+    const model = modelOptionName(config.videoModel || config.model);
+    const resolution = normalizeDreamVideoResolution(config.vquality, model);
+
+    useEffect(() => {
+        if (!isBuiltInDreamVideoConfig(config) || !isDreamSeedance20Model(model) || config.vquality === resolution) return;
+        onConfigChange("vquality", resolution);
+    }, [config, model, onConfigChange, resolution]);
 
     useEffect(() => {
         if (!open) return;
@@ -50,10 +58,15 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, buttonClass
     return (
         <>
             <span ref={buttonRef} className="inline-flex min-w-0">
-                <Button size="small" type="text" className={buttonClassName || "!h-8 !max-w-[170px] !justify-start !rounded-full !px-2.5"} style={{ background: theme.node.fill, color: theme.node.text }} icon={<Settings2 className="size-3.5" />} onClick={() => setOpen((current) => !current)}>
-                    <span className="truncate">
-                        {videoSettingsSummary(config, t)}
-                    </span>
+                <Button
+                    size="small"
+                    type="text"
+                    className={buttonClassName || "!h-8 !max-w-[170px] !justify-start !rounded-full !px-2.5"}
+                    style={{ background: theme.node.fill, color: theme.node.text }}
+                    icon={<Settings2 className="size-3.5" />}
+                    onClick={() => setOpen((current) => !current)}
+                >
+                    <span className="truncate">{videoSettingsSummary(config, t, { includeDreamResolution: true })}</span>
                 </Button>
             </span>
             {panel}
@@ -98,15 +111,8 @@ function VideoSettingsPortal({
     } as const;
 
     return createPortal(
-        <div
-            ref={panelRef}
-            className="canvas-image-settings-popover"
-            style={style}
-            onPointerDown={(event) => event.stopPropagation()}
-            onMouseDown={(event) => event.stopPropagation()}
-            onClick={(event) => event.stopPropagation()}
-        >
-            <VideoSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
+        <div ref={panelRef} className="canvas-image-settings-popover" style={style} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+            <VideoSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} showDreamResolution className="space-y-4" />
         </div>,
         document.body,
     );

@@ -32,6 +32,32 @@ export async function handleIntegrationRoutes(
     throw new HttpError(404, 'not_found', 'Platform integration is disabled');
   }
 
+  if (pathname === '/api/platform/onboarding/projects/list') {
+    if (req.method !== 'POST') return methodNotAllowed(res, 'POST'), true;
+    assertSameOriginPost(req);
+    const body = objectBody(await readJson(req, maxBodyBytes));
+    const externalToken = normalizeExternalToken(requiredInput(body.externalToken ?? body.external_token, 'externalToken'));
+    if (!externalToken) throw new HttpError(400, 'invalid_request', 'externalToken is required');
+    const projects = await invalidateOnUpstreamUnauthorized(req, res, runtime, () => runtime.client.listProjects(externalToken));
+    sendJson(res, 200, { projects });
+    return true;
+  }
+
+  if (pathname === '/api/platform/onboarding/projects/create') {
+    if (req.method !== 'POST') return methodNotAllowed(res, 'POST'), true;
+    assertSameOriginPost(req);
+    const body = objectBody(await readJson(req, maxBodyBytes));
+    const externalToken = normalizeExternalToken(requiredInput(body.externalToken ?? body.external_token, 'externalToken'));
+    if (!externalToken) throw new HttpError(400, 'invalid_request', 'externalToken is required');
+    const input = parseProjectCreateInput(body);
+    const previousProjects = await invalidateOnUpstreamUnauthorized(req, res, runtime, () => runtime.client.listProjects(externalToken));
+    const createdProject = await invalidateOnUpstreamUnauthorized(req, res, runtime, () => runtime.client.createProject(externalToken, input));
+    const projects = await invalidateOnUpstreamUnauthorized(req, res, runtime, () => runtime.client.listProjects(externalToken));
+    const project = createdProject ?? resolveCreatedProject(previousProjects, projects, input.name);
+    sendJson(res, 200, { project, projects });
+    return true;
+  }
+
   if (pathname === '/api/platform/session/bootstrap') {
     if (req.method !== 'POST') return methodNotAllowed(res, 'POST'), true;
     assertSameOriginPost(req);
@@ -239,7 +265,7 @@ async function invalidateOnUpstreamUnauthorized<T>(
 }
 
 function parseProjectCreateInput(body: Record<string, unknown>): PlatformProjectCreateInput {
-  const skill = integerArray(body.skill, 'skill', true);
+  const skill = integerArray(body.skill, 'skill', false);
   const skillModelValue = body.skillModel ?? body.skill_model;
   return {
     name: requiredInput(body.name, 'name'),
@@ -250,8 +276,21 @@ function parseProjectCreateInput(body: Record<string, unknown>): PlatformProject
   };
 }
 
+function resolveCreatedProject(before: Awaited<ReturnType<IntegrationClient['listProjects']>>, after: Awaited<ReturnType<IntegrationClient['listProjects']>>, name: string) {
+  const previousIds = new Set(before.map((project) => project.projectId));
+  const added = after.filter((project) => !previousIds.has(project.projectId));
+  if (added.length === 1) return added[0];
+  const normalizedName = name.trim();
+  const matching = added.filter((project) => project.name === normalizedName);
+  return matching.length === 1 ? matching[0] : null;
+}
+
 function integerArray(value: unknown, name: string, required: boolean): number[] {
-  if (!Array.isArray(value) || (required && value.length === 0)) throw new HttpError(400, 'invalid_request', `${name} must be a non-empty array`);
+  if (value === undefined || value === null) {
+    if (required) throw new HttpError(400, 'invalid_request', `${name} must be a non-empty array`);
+    return [];
+  }
+  if (!Array.isArray(value) || (required && value.length === 0)) throw new HttpError(400, 'invalid_request', `${name} must be an array`);
   if (!value.every((item) => typeof item === 'number' && Number.isSafeInteger(item))) {
     throw new HttpError(400, 'invalid_request', `${name} must contain only integers`);
   }

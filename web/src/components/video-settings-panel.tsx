@@ -4,15 +4,18 @@ import { Switch } from "antd";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import {
     boolConfig,
+    dreamVideoResolutionOptions,
     dreamVideoModes,
     dreamVideoRatioOptions,
     isBuiltInDreamVideoConfig,
     isDreamSeedance20Model,
+    isDreamVideoResolutionSelectable,
     isSeedanceFastModel,
     isSeedanceVideoConfig,
     normalizeDreamVideoDuration,
     normalizeDreamVideoMode,
     normalizeDreamVideoRatio,
+    normalizeDreamVideoResolution,
     normalizeDreamVideoSeed,
     normalizeSeedanceDuration,
     normalizeSeedanceRatio,
@@ -51,13 +54,14 @@ type VideoSettingsPanelProps = {
     onConfigChange: (key: "vquality" | "size" | "videoMode" | "videoSeed" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
+    showDreamResolution?: boolean;
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, showDreamResolution = false, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useI18n();
     if (isBuiltInDreamVideoConfig(config)) {
-        return <DreamVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+        return <DreamVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} showDreamResolution={showDreamResolution} className={className} />;
     }
     if (isSeedanceVideoConfig(config)) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
@@ -124,10 +128,11 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     );
 }
 
-function DreamVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+function DreamVideoSettingsPanel({ config, onConfigChange, theme, showTitle, showDreamResolution, className }: VideoSettingsPanelProps) {
     const { t } = useI18n();
     const model = modelOptionName(config.videoModel || config.model);
     const mode = normalizeDreamVideoMode(config.videoMode, model);
+    const resolution = normalizeDreamVideoResolution(config.vquality, model);
     const ratio = normalizeDreamVideoRatio(config.size, model);
     const duration = normalizeDreamVideoDuration(config.videoSeconds, model);
     const generateAudio = boolConfig(config.videoGenerateAudio, false);
@@ -137,6 +142,28 @@ function DreamVideoSettingsPanel({ config, onConfigChange, theme, showTitle, cla
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settings.video.title")}</div> : null}
+                {showDreamResolution && isDreamSeedance20Model(model) ? (
+                    <SettingGroup title={t("settings.video.resolution")} color={theme.node.muted}>
+                        {isDreamVideoResolutionSelectable(model) ? (
+                            <div className="grid grid-cols-3 gap-2.5">
+                                {dreamVideoResolutionOptions.map((item) => (
+                                    <OptionPill key={item.value} selected={resolution === item.value} theme={theme} onClick={() => onConfigChange("vquality", item.value)}>
+                                        {item.label}
+                                    </OptionPill>
+                                ))}
+                            </div>
+                        ) : (
+                            <>
+                                <div className="grid grid-cols-3 gap-2.5">
+                                    <OptionPill selected disabled theme={theme} onClick={() => undefined}>
+                                        720p
+                                    </OptionPill>
+                                </div>
+                                <div className="text-[11px] leading-4 opacity-55">{t("settings.video.fixedResolutionHint", { resolution: "720p" })}</div>
+                            </>
+                        )}
+                    </SettingGroup>
+                ) : null}
                 {dreamVideoModes(model).length > 1 ? (
                     <SettingGroup title={t("settings.video.mode")} color={theme.node.muted}>
                         <div className="grid grid-cols-2 gap-2.5">
@@ -192,12 +219,13 @@ function DreamVideoSettingsPanel({ config, onConfigChange, theme, showTitle, cla
     );
 }
 
-export function videoSettingsSummary(config: AiConfig, t?: ReturnType<typeof useI18n>["t"]) {
+export function videoSettingsSummary(config: AiConfig, t?: ReturnType<typeof useI18n>["t"], options?: { includeDreamResolution?: boolean }) {
     if (isBuiltInDreamVideoConfig(config)) {
         const model = modelOptionName(config.videoModel || config.model);
         const mode = normalizeDreamVideoMode(config.videoMode, model);
         const modeLabel = mode === "subject" ? (t ? t("settings.video.modeSubject") : "Subject") : t ? t("settings.video.modeStartEnd") : "Start/end";
-        return `${modeLabel} · ${normalizeDreamVideoRatio(config.size, model)} · ${normalizeDreamVideoDuration(config.videoSeconds, model)}s`;
+        const summary = `${modeLabel} · ${normalizeDreamVideoRatio(config.size, model)} · ${normalizeDreamVideoDuration(config.videoSeconds, model)}s`;
+        return options?.includeDreamResolution && isDreamSeedance20Model(model) ? `${normalizeDreamVideoResolution(config.vquality, model)} · ${summary}` : summary;
     }
     return `${videoResolutionLabel(config.vquality)} · ${videoSizeLabel(config.size, t)} · ${videoSecondsLabel(config.videoSeconds, t)}`;
 }

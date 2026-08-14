@@ -86,7 +86,7 @@ function getImageConfig() {
     const { config } = useConfigStore.getState();
     const model = config.imageModel || config.model;
     return {
-        current: { model, modelName: modelOptionName(model), quality: config.quality || "auto", size: config.size || "1:1", count: config.count || "1" },
+        current: { model, modelName: modelOptionName(model), quality: config.quality || "auto", imageQuality: config.imageQuality || "medium", size: config.size || "1:1", count: config.count || "1" },
         models: config.imageModels.map((value) => ({ value, label: modelOptionLabel(config, value) })),
         qualityOptions: imageQualityOptions,
         sizeOptions: imageAspectOptions,
@@ -105,6 +105,10 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     if (typeof input.quality === "string" && input.quality.trim()) {
         configStore.updateConfig("quality", input.quality);
         applied.quality = input.quality;
+    }
+    if (typeof input.imageQuality === "string" && input.imageQuality.trim()) {
+        configStore.updateConfig("imageQuality", input.imageQuality);
+        applied.imageQuality = input.imageQuality;
     }
     if (typeof input.size === "string" && input.size.trim()) {
         configStore.updateConfig("size", input.size);

@@ -67,6 +67,7 @@ export type AiConfig = {
     textModels: string[];
     audioModels: string[];
     quality: string;
+    imageQuality: string;
     size: string;
     count: string;
     canvasImageCount: string;
@@ -94,15 +95,25 @@ const DREAM_DEFAULT_VIDEO_MODEL = "doubao-seedance-2-0-260128";
 const DREAM_DEFAULT_TEXT_MODEL = "doubao-1.5-pro";
 const DREAM_DEFAULT_AUDIO_MODEL = "tts-synthesize";
 
-export const DREAM_IMAGE_MODELS = ["doubao-seedream-4.5", "doubao-seedream-5-0-260128"] as const;
+export const DREAM_IMAGE_MODELS = ["doubao-seedream-4.5", "doubao-seedream-5-0-260128", "gemini-3.1-flash-image", "gpt-image-2"] as const;
 
-export const DREAM_VIDEO_MODELS = ["doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-mini-260615"] as const;
+export const DREAM_VIDEO_MODELS = ["doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-mini-260615", "doubao-seedance-2-5-260628"] as const;
 
-export const DREAM_TEXT_MODELS = [DREAM_DEFAULT_TEXT_MODEL] as const;
+export const DREAM_TEXT_MODELS = [DREAM_DEFAULT_TEXT_MODEL, "doubao-seed-2-1-pro-260628", "glm-5.2", "gemini-2.5-pro"] as const;
 
 // TTS 文档没有模型字段，使用端点标识作为音频模型选项。
 export const DREAM_AUDIO_MODELS = [DREAM_DEFAULT_AUDIO_MODEL] as const;
 export const DREAM_API_MODELS = [...DREAM_IMAGE_MODELS, ...DREAM_VIDEO_MODELS, ...DREAM_TEXT_MODELS, ...DREAM_AUDIO_MODELS];
+
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+    "gemini-3.1-flash-image": "GBI 3.1",
+    "gpt-image-2": "GP image 2",
+    "doubao-seedream-5-0-260128": "Seedream 5.0 pro",
+    "doubao-seed-2-1-pro-260628": "Doubao 2.1 pro",
+    "glm-5.2": "GLM 5.2",
+    "gemini-2.5-pro": "GMI 2.5 pro",
+    "doubao-seedance-2-5-260628": "Seedance 2.5",
+};
 
 const DEFAULT_CHANNELS = resolveDefaultChannels();
 const DEFAULT_MODELS = modelOptionsFromChannels(DEFAULT_CHANNELS);
@@ -140,6 +151,7 @@ export const defaultConfig: AiConfig = {
     textModels: defaultModelList("text", DEFAULT_TEXT_MODEL),
     audioModels: defaultModelList("audio", DEFAULT_AUDIO_MODEL),
     quality: ENV_DEFAULT_IMAGE_QUALITY || "2k",
+    imageQuality: "medium",
     size: ENV_DEFAULT_IMAGE_SIZE || "1:1",
     count: ENV_DEFAULT_IMAGE_COUNT || "1",
     canvasImageCount: ENV_DEFAULT_CANVAS_IMAGE_COUNT || "3",
@@ -363,6 +375,7 @@ export const useConfigStore = create<ConfigStore>()(
                         videoSeed: config.videoSeed || "-1",
                         videoGenerateAudio: config.videoGenerateAudio || "false",
                         videoWatermark: config.videoWatermark || "false",
+                        imageQuality: config.imageQuality || defaultConfig.imageQuality,
                         canvasImageCount: config.canvasImageCount || "3",
                         imageModels: usePersistedModelLists && Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels, channels) : filterModelsByCapability(models, "image"),
                         videoModels: usePersistedModelLists && Array.isArray(persistedConfig.videoModels) ? normalizeVideoModelList(config.videoModels, channels) : filterModelsByCapability(models, "video"),
@@ -456,11 +469,22 @@ export function modelOptionName(value: string) {
     return decodeChannelModel(value)?.model || value;
 }
 
+export function modelOptionDisplayName(value: string) {
+    const model = modelOptionName(value);
+    return MODEL_DISPLAY_NAMES[model] || model;
+}
+
 export function modelOptionLabel(config: AiConfig, value: string, t?: I18nTranslator) {
     const decoded = decodeChannelModel(value);
-    if (!decoded) return value;
+    if (!decoded) return modelOptionDisplayName(value);
     const channel = config.channels.find((item) => item.id === decoded.channelId);
-    return channel ? `${decoded.model} (${t ? modelChannelDisplayName(channel, t) : channel.name || channel.id})` : decoded.model;
+    const displayName = modelOptionDisplayName(decoded.model);
+    // The built-in Dream channel is an implementation detail. Showing its
+    // configured name (for example, "qixiang") makes the model picker look
+    // like it is exposing a second model qualifier, so keep only the model
+    // display name in user-facing labels.
+    if (!channel || channel.id === DREAM_CHANNEL_ID) return displayName;
+    return `${displayName} (${t ? modelChannelDisplayName(channel, t) : channel.name || channel.id})`;
 }
 
 export function modelChannelDisplayName(channel: Pick<ModelChannel, "id" | "name">, t: I18nTranslator) {

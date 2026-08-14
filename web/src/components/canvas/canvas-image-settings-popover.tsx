@@ -5,7 +5,7 @@ import { Button } from "antd";
 
 import { ImageSettingsPanel, imageQualityLabel, imageSizeLabel, isDreamImageSettings } from "@/components/image-settings-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { dreamImageSelection } from "@/lib/dream-image-size";
+import { dreamImageSelection, isDreamGptImageModel, normalizeDreamImageQuality } from "@/lib/dream-image-size";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
 import { useI18n } from "@/i18n/use-i18n";
@@ -32,7 +32,9 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
     const dreamMode = isDreamImageSettings(config);
-    const dreamSize = dreamImageSelection(quality, activeSize);
+    const selectedModel = config.model || config.imageModel;
+    const dreamSize = dreamImageSelection(quality, activeSize, selectedModel);
+    const dreamQuality = normalizeDreamImageQuality(config.imageQuality || "medium");
     const updateOpen = (nextOpen: boolean) => {
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);
@@ -75,7 +77,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
                     onClick={() => updateOpen(!open)}
                 >
                     <span className="truncate">
-                        {dreamMode ? `${dreamSize.resolution.toUpperCase()} · ${dreamSize.ratio} · ${dreamSize.width}×${dreamSize.height}` : `${imageQualityLabel(quality, t)} · ${imageSizeLabel(activeSize, t)}`} ·{" "}
+                        {dreamMode ? `${dreamSize.resolution.toUpperCase()} · ${dreamSize.ratio} · ${dreamSize.width}×${dreamSize.height}${isDreamGptImageModel(selectedModel) ? ` · ${imageQualityLabel(dreamQuality, t)}` : ""}` : `${imageQualityLabel(quality, t)} · ${imageSizeLabel(activeSize, t)}`} ·{" "}
                         {t("settings.image.countUnit", { count })}
                     </span>
                 </Button>

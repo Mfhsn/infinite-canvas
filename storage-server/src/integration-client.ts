@@ -336,11 +336,20 @@ export function parsePlatformContext(value: Record<string, unknown>, config: Int
     ? permissionValue.map((item) => typeof item === 'object' && item ? first(item as Record<string, unknown>, ['id', 'permission_id']) : item).map(Number).filter(Number.isSafeInteger)
     : [];
   const points = firstAcross([value, profile, project], ['current_points', 'currentPoints', 'points']);
-  const localProjectId = Number(
-    first(value, ['local_project_id', 'localProjectId'])
-    ?? first(project, ['local_project_id', 'localProjectId', 'id']),
-  );
-  if (!Number.isSafeInteger(localProjectId)) throw new HttpError(502, 'invalid_integration_response', 'Platform response is missing local project context');
+  const localProjectValue = firstAcross([value, project], ['local_project_id', 'localProjectId', 'id']);
+  const localProjectId = localProjectValue === null || localProjectValue === undefined
+    ? null
+    : Number(localProjectValue);
+  if (localProjectId !== null && !Number.isSafeInteger(localProjectId)) {
+    throw new HttpError(502, 'invalid_integration_response', 'Platform response has invalid local project context');
+  }
+  const externalProjectId = optionalStringAcross([
+    { value, keys: ['external_project_id', 'externalProjectId', 'project_id'] },
+    { value: project, keys: ['external_project_id', 'externalProjectId', 'project_id'] },
+  ]);
+  if (localProjectId === null && externalProjectId !== null) {
+    throw new HttpError(502, 'invalid_integration_response', 'Platform response has incomplete project context');
+  }
   return {
     authenticated: true,
     // Project/context objects may also contain a generic `id`. Never merge those
@@ -363,10 +372,7 @@ export function parsePlatformContext(value: Record<string, unknown>, config: Int
     permissionIds,
     currentPoints: points === null || points === undefined || points === '' ? null : finiteNumber(points, 'current points'),
     localProjectId,
-    externalProjectId: optionalStringAcross([
-      { value, keys: ['external_project_id', 'externalProjectId', 'project_id'] },
-      { value: project, keys: ['external_project_id', 'externalProjectId', 'project_id'] },
-    ]),
+    externalProjectId,
     sourceSystem: requiredSourceSystem([value, project], config),
     expiresAt: parseExpiry(firstAcross([value, project], ['expires_at', 'expiresAt', 'local_token_expires_at']), config.sessionTtlSeconds),
   };

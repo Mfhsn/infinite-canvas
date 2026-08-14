@@ -7,6 +7,9 @@ import type { AiConfig } from "@/stores/use-config-store";
 
 (globalThis as typeof globalThis & { __APP_VERSION__: string }).__APP_VERSION__ = "test";
 process.env.VITE_AI_PLATFORM_ID = "6";
+process.env.VITE_AI_LLM_MAX_COMPLETION_TOKENS = "4096";
+process.env.VITE_DREAM_IMAGE_PLATFORM_ID = "16";
+process.env.VITE_DREAM_VIDEO_PLATFORM_ID = "17";
 const { useUserStore } = await import("@/stores/use-user-store");
 
 afterEach(() => {
@@ -119,6 +122,21 @@ describe("Dream image request", () => {
         expect(dreamProjectRequestFields(false)).toEqual({});
     });
 
+    test("omits project_id when the authenticated user has no project", async () => {
+        useUserStore.setState({
+            projectContext: {
+                localProjectId: null,
+                externalProjectId: null,
+                sourceSystem: "platform",
+                expiresAt: "2026-07-24T00:00:00Z",
+            },
+        });
+        const { dreamProjectRequestFields } = await import("@/services/api/dream");
+
+        expect(dreamProjectRequestFields(true)).toEqual({});
+        expect(dreamProjectRequestFields(false)).toEqual({});
+    });
+
     test("requires the access token used as API Key", async () => {
         const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, message: "ok", data: "https://example.test/image.png" } });
         try {
@@ -131,14 +149,14 @@ describe("Dream image request", () => {
         }
     });
 
-    test("sends bearer authorization and the configured platform ID", async () => {
+    test("uses the Dream image platform ID from the environment", async () => {
         const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, message: "ok", data: "https://example.test/image.png" } });
         try {
             const { requestDreamImageGeneration } = await import("@/services/api/dream");
             const { defaultConfig } = await import("@/stores/use-config-store");
-            const images = await requestDreamImageGeneration({ ...defaultConfig, apiKey: "access-token", platformId: 6 }, "test", 1);
+            const images = await requestDreamImageGeneration({ ...defaultConfig, apiKey: "access-token", platformId: 99 }, "test", 1);
             const [, body, options] = post.mock.calls[0];
-            expect(body).toMatchObject({ dream_image_req_key: "doubao-seedream-4.5", platform_id: 6, width: 2048, height: 2048, num_images: 1 });
+            expect(body).toMatchObject({ dream_image_req_key: "doubao-seedream-4.5", platform_id: 16, width: 2048, height: 2048, num_images: 1 });
             expect(options?.headers).toMatchObject({ Authorization: "Bearer access-token", "Content-Type": "application/json" });
             expect(images[0]?.dataUrl).toBe("https://example.test/image.png");
         } finally {
@@ -173,6 +191,34 @@ describe("Dream image request", () => {
         }
     });
 
+    test("sends GBI 1K as a 1024 square request", async () => {
+        const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, message: "ok", data: "https://example.test/image.png" } });
+        try {
+            const { requestDreamImageGeneration } = await import("@/services/api/dream");
+            const { defaultConfig } = await import("@/stores/use-config-store");
+            const config = configuredDreamConfig(defaultConfig, "gemini-3.1-flash-image");
+            await requestDreamImageGeneration({ ...config, quality: "1k", size: "1:1" }, "test", 1);
+
+            expect(post.mock.calls[0]?.[1]).toMatchObject({ dream_image_req_key: "gemini-3.1-flash-image", width: 1024, height: 1024 });
+        } finally {
+            post.mockRestore();
+        }
+    });
+
+    test("normalizes unsupported GPT Image 2 settings before sending", async () => {
+        const post = spyOn(axios, "post").mockResolvedValue({ data: { code: 0, message: "ok", data: "https://example.test/image.png" } });
+        try {
+            const { requestDreamImageGeneration } = await import("@/services/api/dream");
+            const { defaultConfig } = await import("@/stores/use-config-store");
+            const config = configuredDreamConfig(defaultConfig, "gpt-image-2");
+            await requestDreamImageGeneration({ ...config, quality: "4k", imageQuality: "high", size: "21:9" }, "test", 1);
+
+            expect(post.mock.calls[0]?.[1]).toMatchObject({ dream_image_req_key: "gpt-image-2", width: 2560, height: 1440, image_quality: "high" });
+        } finally {
+            post.mockRestore();
+        }
+    });
+
     for (const model of ["doubao-seedream-4.5", "doubao-seedream-5-0-260128"]) {
         test(`uploads reference images and sends asset IDs for ${model}`, async () => {
             const post = spyOn(axios, "post")
@@ -189,7 +235,7 @@ describe("Dream image request", () => {
                 expect((post.mock.calls[0]?.[1] as FormData).get("usage")).toBe("mixcut");
                 expect(post.mock.calls[0]?.[2]?.headers).toEqual({ Authorization: "Bearer access-token" });
                 expect(post.mock.calls[1]?.[0]).toBe("http://example.test/api/v1/dream/dream_image");
-                expect(post.mock.calls[1]?.[1]).toMatchObject({ dream_image_req_key: model, image_asset_ids: ["asset-1"], script_text: "follow the reference", width: 2048, height: 2048 });
+                expect(post.mock.calls[1]?.[1]).toMatchObject({ platform_id: 16, dream_image_req_key: model, image_asset_ids: ["asset-1"], script_text: "follow the reference", width: 2048, height: 2048 });
             } finally {
                 post.mockRestore();
             }
@@ -234,7 +280,7 @@ describe("Dream image request", () => {
             const mask = { ...referenceImage, id: "mask", name: "mask.png" };
             const images = await requestDreamImageEdit(configuredDreamConfig(defaultConfig, "i2i_inpainting_edit"), "replace sky", [referenceImage], mask, 1);
 
-            expect(post.mock.calls[2]?.[1]).toMatchObject({ req_key: "i2i_inpainting_edit", task_type: "dream", image_asset_ids: ["source-asset", "mask-asset"] });
+            expect(post.mock.calls[2]?.[1]).toMatchObject({ platform_id: 16, req_key: "i2i_inpainting_edit", task_type: "dream", image_asset_ids: ["source-asset", "mask-asset"] });
             expect(get.mock.calls.map(([url]) => url)).toEqual(["http://example.test/api/v1/task/inpaint-task/status", "http://example.test/api/v1/task/inpaint-task/results"]);
             expect(get.mock.calls.every(([, options]) => options?.headers?.Authorization === "Bearer access-token")).toBe(true);
             expect(images[0]?.dataUrl).toBe("http://example.test/storage/inpainted.png");
@@ -256,7 +302,7 @@ describe("Dream image request", () => {
             const { defaultConfig } = await import("@/stores/use-config-store");
             const images = await requestDreamImageEdit(configuredDreamConfig(defaultConfig, "i2i_outpainting"), "extend background", [referenceImage]);
 
-            expect(post.mock.calls[1]?.[1]).toMatchObject({ req_key: "i2i_outpainting", task_type: "dream", image_asset_ids: ["source-asset"] });
+            expect(post.mock.calls[1]?.[1]).toMatchObject({ platform_id: 16, req_key: "i2i_outpainting", task_type: "dream", image_asset_ids: ["source-asset"] });
             expect(get.mock.calls.map(([url]) => url)).toEqual(["http://example.test/api/v1/task/outpaint-task/status", "http://example.test/api/v1/task/outpaint-task/results"]);
             expect(images[0]?.dataUrl).toBe("http://example.test/storage/outpainted.png");
         } finally {
@@ -288,6 +334,14 @@ describe("Dream LLM request", () => {
             },
         });
         try {
+            useUserStore.setState({
+                projectContext: {
+                    localProjectId: 42,
+                    externalProjectId: "external-42",
+                    sourceSystem: "platform",
+                    expiresAt: "2026-07-24T00:00:00Z",
+                },
+            });
             const { requestImageQuestion } = await import("@/services/api/image");
             const { dreamLlmApiUrl } = await import("@/services/api/dream-llm");
             const { defaultConfig } = await import("@/stores/use-config-store");
@@ -300,9 +354,11 @@ describe("Dream LLM request", () => {
             expect(deltas).toEqual(["这是模型回复"]);
             expect(post.mock.calls[0]?.[0]).toBe("https://106.75.147.147/api/v1/ai-service/llm/chat");
             expect(post.mock.calls[0]?.[1]).toEqual({
-                project_id: 0,
+                project_id: 42,
                 platform_code: "ucloud",
+                platform_id: 6,
                 model_code: "doubao-1.5-pro",
+                max_completion_tokens: 4096,
                 messages: [
                     { role: "system", content: "你是画布助手" },
                     { role: "user", content: "你好" },
@@ -324,6 +380,7 @@ describe("Dream LLM request", () => {
             const { defaultConfig } = await import("@/stores/use-config-store");
             await requestDreamLlmChat({ ...defaultConfig, apiKey: "" }, [{ role: "user", content: "hello" }]);
 
+            expect(post.mock.calls[0]?.[1]).not.toHaveProperty("project_id");
             expect(post.mock.calls[0]?.[2]?.headers).toEqual({ "Content-Type": "application/json", [CANVAS_SESSION_BINDING_HEADER]: "binding-llm" });
             expect(post.mock.calls[0]?.[2]?.headers).not.toHaveProperty("Authorization");
         } finally {
@@ -407,7 +464,7 @@ describe("Dream video request", () => {
                 duration: 10,
                 audio: false,
                 seed: -1,
-                platform_id: 6,
+                platform_id: 17,
             });
             expect(post.mock.calls[2]?.[1]).not.toHaveProperty("video_ids");
             expect(post.mock.calls[2]?.[1]).not.toHaveProperty("audio_ids");
@@ -428,7 +485,7 @@ describe("Dream video request", () => {
         try {
             const { createVideoGenerationTask } = await import("@/services/api/video");
             const { defaultConfig } = await import("@/stores/use-config-store");
-            const config = { ...configuredDreamConfig(defaultConfig, "doubao-seedance-2-0-260128"), size: "21:9", videoSeconds: "12", videoMode: "subject", videoGenerateAudio: "" };
+            const config = { ...configuredDreamConfig(defaultConfig, "doubao-seedance-2-0-260128"), size: "21:9", videoSeconds: "12", videoMode: "subject", videoGenerateAudio: "", vquality: "4K" };
             const task = await createVideoGenerationTask(
                 config,
                 "animate subject",
@@ -439,6 +496,7 @@ describe("Dream video request", () => {
 
             expect(task.id).toBe("subject-task");
             expect(post.mock.calls[4]?.[1]).toMatchObject({
+                platform_id: 17,
                 action_type: "reference2video",
                 dream_video_req_key: "doubao-seedance-2-0-260128",
                 image_asset_ids: ["image-asset"],
@@ -448,12 +506,35 @@ describe("Dream video request", () => {
                 aspect_ratio: "21:9",
                 duration: 12,
                 audio: false,
+                resolution: "4K",
             });
             expect(post.mock.calls[4]?.[1]).not.toHaveProperty("subjects");
             expect(post.mock.calls[4]?.[1]).not.toHaveProperty("seed");
         } finally {
             post.mockRestore();
             URL.revokeObjectURL(videoUrl);
+        }
+    });
+
+    test("forces Fast and Mini generation requests to the fixed 720p resolution", async () => {
+        const post = spyOn(axios, "post")
+            .mockResolvedValueOnce({ data: { id: "fast-first" } })
+            .mockResolvedValueOnce({ data: { id: "fast-last" } })
+            .mockResolvedValueOnce({ data: { code: 0, message: "ok", data: "fast-task" } })
+            .mockResolvedValueOnce({ data: { id: "mini-first" } })
+            .mockResolvedValueOnce({ data: { id: "mini-last" } })
+            .mockResolvedValueOnce({ data: { code: 0, message: "ok", data: "mini-task" } });
+        try {
+            const { createVideoGenerationTask } = await import("@/services/api/video");
+            const { defaultConfig } = await import("@/stores/use-config-store");
+
+            await createVideoGenerationTask({ ...configuredDreamConfig(defaultConfig, "doubao-seedance-2-0-fast-260128"), videoMode: "start-end", vquality: "4K" }, "fast animation", [referenceImage, lastReferenceImage]);
+            await createVideoGenerationTask({ ...configuredDreamConfig(defaultConfig, "doubao-seedance-2-0-mini-260615"), videoMode: "start-end", vquality: "1080p" }, "mini animation", [referenceImage, lastReferenceImage]);
+
+            expect(post.mock.calls[2]?.[1]).toMatchObject({ platform_id: 17, dream_video_req_key: "doubao-seedance-2-0-fast-260128", resolution: "720p" });
+            expect(post.mock.calls[5]?.[1]).toMatchObject({ platform_id: 17, dream_video_req_key: "doubao-seedance-2-0-mini-260615", resolution: "720p" });
+        } finally {
+            post.mockRestore();
         }
     });
 
@@ -484,7 +565,7 @@ describe("Dream video request", () => {
 
             expect(task.id).toBe("image-reference-task");
             expect(post.mock.calls[1]?.[1]).toMatchObject({
-                platform_id: 6,
+                platform_id: 17,
                 project_id: 42,
                 action_type: "reference2video",
                 dream_video_req_key: "doubao-seedance-2-0-260128",
